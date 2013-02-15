@@ -1,8 +1,10 @@
 from setuptools import setup, find_packages
 
+import ajax_forms
+
 setup(
     name='django-ajax-forms',
-    version='0.0.2',
+    version = ajax_forms.__version__,
     description='Provides support for doing validation using Ajax(currently with jQuery) using your existing Django forms.',
     author='Jonas Geiregat',
     author_email='jonas@geiregat.org',
