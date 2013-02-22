@@ -7,6 +7,7 @@ from django.conf import settings
 from django.http import HttpResponse, Http404
 from django.utils import simplejson
 from django.views.decorators.http import require_POST
+from django.forms.models import modelformset_factory
 from django.forms.formsets import BaseFormSet
 from django.forms.forms import BaseForm
 from django.forms.models import ModelForm
@@ -22,6 +23,7 @@ from django.views.generic.edit import SingleObjectMixin
 from django.utils.safestring import mark_safe
 from django.template import Context, Template
 from django.template.loader import render_to_string, get_template
+from django.db import models
 
 from ajax_forms.utils import LazyEncoder
 from ajax_forms import constants as C
@@ -95,6 +97,7 @@ def handle_ajax_crud(request, model_name, action, **kwargs):
             raise Exception, 'Permission denied.'
         raise Http404
     
+    action_args = dict((str(k),v) for k,v in action_args.iteritems())
     response = getattr(form, action)(request, **action_args)
     if action == C.VIEW:
         return HttpResponse(
@@ -109,7 +112,6 @@ def handle_ajax_etter(request, model_name, action, attr_slug, pk):
     """
     Returns single object attributes as JSON.
     """
-    from django.db import models
     
     form_cls = SLUG_TO_FORM_REGISTRY.get(model_name)
     if not form_cls:
@@ -287,7 +289,20 @@ class AjaxModelFormView(AjaxValidModelFormMixin, AjaxInvalidFormMixin, BaseCreat
 
 SLUG_TO_FORM_REGISTRY = {}
 
+def register_ajax_cls(cls, slug):
+    if slug in SLUG_TO_FORM_REGISTRY and SLUG_TO_FORM_REGISTRY[slug] != cls:
+        raise Exception, ('Form slug conflict! Forms %s and %s ' + \
+            'both use the same slug "%s"!') \
+                % (cls, SLUG_TO_FORM_REGISTRY[slug], slug)
+    SLUG_TO_FORM_REGISTRY[slug] = cls
+    for sf in cls.sub_forms:
+        sf.parent_form_cls = cls
+
 class SubclassTracker(ModelForm.__metaclass__):
+    """
+    Allows for tracking ajax form subclasses and associating them with
+    a unique slug for referencing via ajax calls.
+    """
     def __init__(cls, name, bases, dct):
         slug = None
         if name != 'BaseAjaxModelForm' and issubclass(cls, BaseAjaxModelForm) \
@@ -301,11 +316,7 @@ class SubclassTracker(ModelForm.__metaclass__):
             elif hasattr(cls, 'Meta') and hasattr(cls.Meta, 'model'):
                 slug = cls.Meta.model.__name__.lower().strip()
             if slug:
-                if slug in SLUG_TO_FORM_REGISTRY:
-                    raise Exception, ('Form slug conflict! Forms %s and %s ' + \
-                        'both use the same slug "%s"!') \
-                            % (cls, SLUG_TO_FORM_REGISTRY[slug], slug)
-                SLUG_TO_FORM_REGISTRY[slug] = cls
+                register_ajax_cls(cls, slug)
         super(SubclassTracker, cls).__init__(name, bases, dct)
         
 class BaseAjaxModelForm(ModelForm):
@@ -344,9 +355,13 @@ class BaseAjaxModelForm(ModelForm):
     
     insert_element = 'body'
     
-#    extra = True
-#    
-#    extra_position = C.BOTTOM
+    js_extra = {} # {field name: [js template]}
+                
+    sub_forms = ()
+    
+    slug = None
+    
+    parent_form_cls = None
 
     def __init__(self, *args, **kwargs):
         
@@ -360,6 +375,8 @@ class BaseAjaxModelForm(ModelForm):
         self.init()
         self.form_field_names = []
         self.checkbox_fields = []
+        self.model_field_name_to_form_field_name = {}
+        self.js_extra_rendered = []
         
         assert self.prefix
         
@@ -369,6 +386,13 @@ class BaseAjaxModelForm(ModelForm):
             vkey = self.prefix + '-' + fn
             self.form_field_names.append(vkey)
             self._validation_rules[vkey] = self.get_validation_rules(fn)
+            self.model_field_name_to_form_field_name[fn] = vkey
+            
+            for js_template in self.js_extra.get(fn, []):
+                self.js_extra_rendered.append(js_template % dict(
+                    id='id_'+self.model_field_name_to_form_field_name[fn],
+                    name=self.model_field_name_to_form_field_name[fn],
+                ))
             
             # Set custom labels.
             if fn in self.verbose_names:
@@ -388,8 +412,58 @@ class BaseAjaxModelForm(ModelForm):
             self.fields[fn].widget.attrs['field-name'] = fn
             
             # Set optional AJAX setter server-side callbacks.
-            if fn in self.ajax_setters:
+            if self.instance.pk and fn in self.ajax_setters:
                 self.fields[fn].widget.attrs['ajax-set-url'] = self.set_url(fn)
+        
+        # Confirm that each sub-form has a field that references
+        # the current form's model.
+        parent_field_names = set(f.name for f in self.Meta.model._meta.fields)
+        self.sub_formset_instances = [] # [(sf,formset)]
+        for sf in self.sub_forms:
+            #assert isinstance(sf, AjaxSubForm)
+            sf.parent_form_cls = type(self)
+            
+            fk_name_to_model = dict(
+                (f.name, f.rel.to)
+                for f in sf.Meta.model._meta.fields
+                if isinstance(f, models.ForeignKey)
+            ) # {name:model}
+            fk_model_to_name = dict((v,k) for k,v in fk_name_to_model.iteritems())
+            fk_models = fk_name_to_model.values()
+            fk_models_set = set(fk_name_to_model.values())
+            
+            # Identify a ForeignKey field in the sub-form whose model
+            # matches the parent form's model.
+            if sf.fk:
+                assert sf.fk in fk_name_to_model, \
+                    ('Sub-form %s refers to foreign key field "%s" which ' + \
+                     'does not exist.') % (sf, sf.fk)
+            else:
+                _count = fk_models.count(self.Meta.model)
+                assert _count > 0, ('Sub-form %s could not be correlated ' + \
+                    'with parent model %s.') % (sf, self.Meta.model.__name__)
+                assert _count == 1, ('Sub-form %s correlated to multiple ' + \
+                    'fields in parent model %s. Use fk to specify which ' + \
+                    'field to use.') % (sf, self.Meta.model.__name__)
+                sf.fk = fk_model_to_name[self.Meta.model]
+        
+            if self.instance.pk:
+                #q = sf.Meta.model.objects.filter(**{sf.fk:self.instance})
+                q = sf.get_child_queryset(self.instance)
+                formset_cls = modelformset_factory(
+                    sf.Meta.model,
+                    form=sf,
+                    extra=sf.extra,#number of empty forms to show
+                )
+                formset = formset_cls(
+                    queryset=q,
+                    initial=[{sf.fk:self.instance.pk}],
+                    prefix=self.prefix+'-'+sf.prefix,
+                )
+                self.sub_formset_instances.append((sf, formset))
+                for form in formset:
+                    self._validation_rules.update(form._validation_rules)
+                    self.js_extra_rendered.extend(form.js_extra_rendered)
     
     def init(self):
         self.__attr_to_slug = {}
@@ -404,6 +478,12 @@ class BaseAjaxModelForm(ModelForm):
         else:
             return '?'
     
+    def get_ajax_getters(self):
+        return self.ajax_getters
+    
+    def get_ajax_setters(self):
+        return self.ajax_setters
+    
     @property
     def delete_id(self):
         return self.instance.id
@@ -416,7 +496,8 @@ class BaseAjaxModelForm(ModelForm):
         t = Template(u"""<a
             href="#"
             ajax-url="{{ form.delete_url }}"
-            class="delete-{{ form_id }}"
+            class="ajax-delete-link"
+            ajax-model="{{ form.delete_model }}"
             onclick="return "
             alt="delete"
             title="delete">x</a>""")
@@ -426,9 +507,22 @@ class BaseAjaxModelForm(ModelForm):
         ))
         return t.render(c)
     
+    def create_button(self):
+        t = Template(u"""<input
+        type="submit"
+        value="Create"
+        create_button="true"
+        ajax-prefix="{{ form.prefix }}"
+        ajax-url="{{ form.create_url }}"
+        onclick="return false;" />""")
+        c = Context(dict(
+            form_id=self.id,
+            form=self,
+        ))
+        return t.render(c)
+    
     def __unicode__(self):
         if self.template:
-            #c = RequestContext(request, {'form': form})
             c = Context(dict(
                 form=self,
                 form_id=self.id,
@@ -475,15 +569,19 @@ class BaseAjaxModelForm(ModelForm):
     
     @property
     def model_name_slug(self):
+        if self.slug:
+            return self.slug
         s = self.Meta.model.__name__.lower().strip()
         s = re.sub('[^a-z0-9]+', '-', s)
         return s
+    
+    def get_container_class(self):
+        return self.model_name_slug+'-container'
     
     def get_object(self, pk):
         return self.Meta.model.objects.get(pk=pk)
     
     def as_p_complete(self, *args, **kwargs):
-        
         rules = self._validation_rules
         validate_options_str = mark_safe(simplejson.dumps({'rules':rules}))
         
@@ -492,121 +590,30 @@ class BaseAjaxModelForm(ModelForm):
     id="{{ form_id }}"
     action="{{ action_url }}"
     method="{{ method }}"
+    container_class="{{ form.get_container_class }}"
+    insert_element="{{ form.insert_element }}"
     {% if delete_id %}delete_id="{{ delete_id }}" delete_model="{{ delete_model }}"{% endif %}
     {% if form.is_multipart %}enctype="multipart/form-data"{% endif %}>
-{% csrf_token %}
-{{ form.as_p }}
-<p class="submit-button-section {{ submit_button_classes }}">
-    <input type="submit" value="{{ submit_value }}" onclick="return false;" />
-</p>
+    {{ form.as_p }}
+    <p class="submit-button-section {{ submit_button_classes }}">
+        <input
+            type="submit"
+            value="{{ submit_value }}"
+            {% if not form.instance.pk %}
+            create_button="true"
+            ajax-prefix="{{ form.prefix }}"
+            ajax-url="{{ form.create_url }}"
+            {% endif %}
+            onclick="return false;" />
+    </p>
+    {{ form.render_sub_forms }}
 </form>
 <script type="text/javascript">
 (function($){
     $(document).ready(function(){
         var options = {{ validate_options_str }};
-        
-        {% if form.instance.pk %}
-        {% for fn in form_field_names %}
-            options['rules']['{{ fn }}']['onComplete'] = function(el){
-                var el = $(el);
-                var is_valid = el.hasClass('valid') || el.is('[type=checkbox]');
-                var ajax_set_url = el.attr('ajax-set-url');
-                var is_focussed = el.is(':focus');
-                var value = (el.is('[type=checkbox]'))?el.is(':checked'):el.val();
-                if(!is_focussed && is_valid && ajax_set_url){
-                    $.ajax({
-                        url:ajax_set_url,
-                        type:'POST',
-                        data:{value:value},
-                        dataType:'json'
-                    })
-                    .done(function(data){
-                        el.val(data['value']);
-                        var original_color = el.attr('ajax-original-color');
-                        if(original_color == null){
-                            var original_color = el.css('border-color');
-                            el.attr('ajax-original-color', original_color);
-                        }
-                        if(data.callback){
-                            $('#{{ form_id }}').data(data.callback)();
-                        }
-                        el.css('border-color', '#0d0');
-                        el.animate({ 'border-color': original_color }, 3000);
-                        return false;
-                    })
-                    .fail(function(data){
-                        el.val(data['value']);
-                        return false;
-                    });
-                }
-            }
-        {% endfor %}
-        {% endif %}
-        
-        $('#{{ form_id }}')
-            .validate(options);
-        $('#{{ form_id }}').data('options', options);
-        $('#{{ form_id }}')
-            .submit(function(){
-                return false;
-            });
-            
-        $('.delete-{{ form_id }}').click(function(){
-            var el = $(this);
-            if(confirm('Delete {{ form.model_name }}?')){
-                $.ajax({
-                    url:el.attr('ajax-url'),
-                    type:'POST',
-                    dataType:'json'
-                })
-                .done(function(data){
-                    if(data['success']){
-                        $('[delete_id='+data['delete_id']+'][delete_model='+data['delete_model']+']')
-                            .fadeOut('slow', function(){
-                                var el = $(this);
-                                el.remove();
-                            });
-                    }else{
-                        alert('Deletion was unsuccessful.');
-                    }
-                    return false;
-                })
-                .fail(function(data){
-                    alert('A problem occurred during deletion. Please try again later.');
-                    return false;
-                });
-            }
-            return false;
-        });
-        $('#{{ form_id }} input[type=checkbox]').change(function(){
-            var el = $(this);
-            var form = el.closest('form');
-            form.data('options')['rules'][el.attr('name')]['onComplete'](el);
-        });
-        $('#{{ form_id }} input[type=submit]').click(function(){
-            var form = $(this).closest('form');
-            if(!form.attr('delete_id') && form.valid()){
-                $.ajax({
-                    url:form.attr('action'),
-                    type:form.attr('method'),
-                    data:form.serialize(),
-                    dataType:'json'
-                })
-                .done(function(data){
-                    if(data['success']){
-                        form[0].reset();
-                        $('{{ form.insert_element }}').prepend(data['html']);
-                    }else{
-                        alert('Unable to create record. Please try again later.');
-                    }
-                    return false;
-                })
-                .fail(function(data){
-                    alert('A problem occurred during creation. Please try again later.');
-                    return false;
-                });
-            }
-        });
+        $('#{{ form_id }}').django_ajax_form(options);
+        {{ js_extra }}
     });
 })(jQuery);
 </script>
@@ -624,7 +631,9 @@ class BaseAjaxModelForm(ModelForm):
             validate_options_str=validate_options_str,
             submit_value=self.get_submit_value(),
             submit_button_classes=self.submit_button_classes,
-            form_field_names=self.form_field_names,
+            #form_field_names=self.form_field_names,
+            form_ajax_setter_names=self.get_ajax_setters(),
+            js_extra=mark_safe(u'\n'.join(self.js_extra_rendered)),
         ))
         return t.render(c)
     
@@ -646,7 +655,7 @@ class BaseAjaxModelForm(ModelForm):
         cleaned = {}
         valid_field_names = set(self.Meta.fields)
         for _k in data.iterkeys():
-            fn = re.sub('^[a-zA-Z]+\-[0-9]+\-', '', _k)
+            fn = re.sub('^[a-zA-Z0-9\-]+\-', '', _k)
             if fn not in valid_field_names:
                 continue
             
@@ -789,9 +798,28 @@ class BaseAjaxModelForm(ModelForm):
             C.DELETE,
             self.instance.pk,
         )
+    
+    def get_parent_obj(self, obj):
+        """
+        Returns the parent object for the parent form associated with
+        the current child object and form.
+        This must be defined for any form used as a sub-form.
+        """
+        override
+    
+    @classmethod
+    def get_child_queryset(cls, parent_obj):
+        return cls.Meta.model.objects.filter(**{cls.fk:parent_obj})
         
     def view(self, request, obj):
-        form = type(self)(instance=obj)#self.Meta.model
+        """
+        Returns the partial view markup for the object and form.
+        """
+        if self.parent_form_cls:
+            obj = self.get_parent_obj(obj)
+            form = self.parent_form_cls(instance=obj)
+        else:
+            form = type(self)(instance=obj)
         return unicode(form)
     
     def get_url(self, attr):
@@ -815,23 +843,63 @@ class BaseAjaxModelForm(ModelForm):
             attr,
             self.instance.pk,
         )
-        
-#    def __unicode__(self):
-#        #todo:list records
-#        #todo:list add record form
-#        return mark_safe(u"<div>hello there</div>")
-        
-#    def render_js(self):
-#        return """
-#<script type="text/javascript">
-#(function($){
-#    $(document).ready(function(){
-#    });
-#});
-#</script>"""
     
-class AjaxSubForm(object):
-    
-    def __init__(self, **kwargs):
-        self.__dict__.update(kwargs)
-        
+    def render_sub_forms(self):
+        if not self.instance.pk:
+            return ''
+        try:
+            c = []
+            for sf, formset in self.sub_formset_instances:
+#            for sf in self.sub_forms:
+#                q = sf.Meta.model.objects.filter(**{sf.fk:self.instance})
+#                
+#                formset_cls = modelformset_factory(
+#                    sf.Meta.model,
+#                    form=sf,
+#                    extra=sf.extra,#number of empty forms to show
+#                )
+#                formset = formset_cls(
+#                    queryset=q,
+#                    initial=[{sf.fk:self.instance}],
+#                    prefix=sf.prefix,
+#                )
+#                self.sub_formset_instances.append(formset)
+                
+                t = Template(u"""
+{% for form in formset %}{{ form }}{% endfor %}
+                """)
+                _c = t.render(Context(dict(
+                    formset=formset
+                )))
+                if not c:
+                    if hasattr(sf.Meta.model._meta, 'verbose_name_plural'):
+                        vn = sf.Meta.model._meta.verbose_name_plural
+                    else:
+                        vn = sf.Meta.model.__name__+'s'
+                    c.append(u'<div class="sub-form-container"><h3 class="sub-forms">%s</h3>' % (vn.title(),))
+                c.append(_c + u'</div>')
+            return mark_safe(u'<br/>'.join(c))
+        except Exception, e:
+            if settings.DEBUG:
+                return '[%s]' % str(e)
+
+def AjaxSubForm(form_cls, slug, **kwargs):
+    """
+    Helper method for modifying one form to act as a sub-form to a parent-form.
+    """
+    id = str(uuid.uuid4()).replace('-', '')
+    new_cls = type(
+        "_%s_%s" % (form_cls.__name__, id),
+        (form_cls,),
+        {
+            'extra':kwargs.get('extra', 0),
+            #'__metaclass__': SubclassTracker,#FIX:is never called?
+        },
+    )
+    new_cls.fk = None
+    new_cls.prefix = 'subform-%s' % new_cls.Meta.model.__name__.lower()
+    new_cls.slug = slug
+    for k, v in kwargs.iteritems():
+        setattr(new_cls, k, v)
+    register_ajax_cls(new_cls, slug)
+    return new_cls
