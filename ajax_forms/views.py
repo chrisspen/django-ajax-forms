@@ -298,7 +298,8 @@ def register_ajax_cls(cls, slug):
     for sf in cls.sub_forms:
         sf.parent_form_cls = cls
 
-class SubclassTracker(ModelForm.__metaclass__):
+#class SubclassTracker(ModelForm.__metaclass__):
+class SubclassTracker(type(ModelForm)):
     """
     Allows for tracking ajax form subclasses and associating them with
     a unique slug for referencing via ajax calls.
