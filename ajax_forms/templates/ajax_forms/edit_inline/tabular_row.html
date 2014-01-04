@@ -1,0 +1,41 @@
+{% load i18n admin_static admin_modify %}
+
+{% if inline_admin_form.form.non_field_errors %}
+    <tr><td colspan="{{ inline_admin_form|cell_count }}">{{ inline_admin_form.form.non_field_errors }}</td></tr>
+{% endif %}
+
+<tr class="form-row {% cycle "row1" "row2" %} {% if inline_admin_form.original or inline_admin_form.show_url %}has_original{% endif %}{% if forloop.last %} empty-form{% endif %}"
+    {% if not no_id %}id="{{ inline_admin_formset.formset.prefix }}-{% if not forloop.last %}{{ forloop.counter0 }}{% else %}empty{% endif %}"{% endif %}>
+
+    {% for fieldset in inline_admin_form %}
+        {% for line in fieldset %}
+          {% for field in line %}
+            <td{% if field.field.name %} class="field-{{ field.field.name }}"{% endif %}>
+            {% if field.is_readonly %}
+                {#<input type="hidden" name="{{ inline_admin_formset.formset.prefix }}-{{ forloop.counter0 }}-id" value="0" />#}
+                <p>{{ field.contents|linebreaksbr }}</p>
+            {% else %}
+                {{ field.field.errors.as_ul }}
+                {{ field.field }}
+            {% endif %}
+            </td>
+          {% endfor %}
+        {% endfor %}
+    {% endfor %}
+    <td style="display:none;">
+          {% if inline_admin_form.has_auto_field %}{{ inline_admin_form.pk_field.field }}{% endif %}
+          {{ inline_admin_form.fk_field.field }}
+          {% spaceless %}
+          {% for fieldset in inline_admin_form %}
+            {% for line in fieldset %}
+              {% for field in line %}
+                {% if field.is_hidden %} {{ field.field }} {% endif %}
+              {% endfor %}
+            {% endfor %}
+          {% endfor %}
+          {% endspaceless %}
+    </td>
+    {% if inline_admin_formset.formset.can_delete %}
+        <td class="delete">{% if inline_admin_form.original %}{{ inline_admin_form.deletion_field.field }}{% endif %}</td>
+    {% endif %}
+</tr>

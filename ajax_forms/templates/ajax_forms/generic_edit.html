@@ -1,0 +1,47 @@
+{% extends "ajax_forms/base.html" %}
+
+{% block extra-head %}{{ form.media }}{% endblock %}
+
+{% block header %}
+    <h2>{% if title %}
+        {{ title|safe }}
+    {% else %}
+        {% for breadcrumb in breadcrumbs %}{% if not forloop.first %} &rsaquo; {% endif %}{{ breadcrumb }}{% endfor %}
+    {% endif %}</h2>
+{% endblock %}
+
+{% block content %}
+    <div class="row-fluid">
+        <div class="span10">
+            <br/>
+            <div><span class="required">*</span> Indicates a required field.</div>
+            <br/>
+            <form action="?" method="post" class="form-horizontal" enctype="multipart/form-data">
+                <div class="form-actions form-actions-top">
+                    {% include "ajax_forms/generic_edit_buttons.html" %}
+                </div>
+                {% csrf_token %}
+                {{ form }}
+                <div class="form-actions">
+                    {% include "ajax_forms/generic_edit_buttons.html" %}
+                </div>
+            </form>
+        </div><!--/span-->
+    </div><!--/row-->
+    {% for inline in inlines %}
+    <div class="row-fluid">
+        <div class="span10">
+            {{ inline|safe }}
+        </div>
+    </div>
+    {% endfor %}
+{% endblock %}
+
+{% block body-footer-javascript %}{{ block.super }}
+<script type="text/javascript">
+(function($){
+    $(document).ready(function(){
+    });
+})(jQuery);
+</script>
+{% endblock body-footer-javascript %}

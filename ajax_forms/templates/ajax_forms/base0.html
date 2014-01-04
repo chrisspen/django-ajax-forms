@@ -1,0 +1,10 @@
+<html>
+    <head>
+        {% block extra-head %}{% endblock %}
+    </head>
+    <body class="{% block page-type %}{% endblock page-type %}">
+        {% block header %}{% endblock %}
+        {% block content %}{% endblock %}
+        {% block body-footer-javascript %}{% endblock %}
+    </body>
+</html>

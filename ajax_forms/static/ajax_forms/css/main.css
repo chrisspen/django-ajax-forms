@@ -1,0 +1,132 @@
+body.daf .actions label,
+body.daf .actions button{
+    /*color:#999;*/
+    display:inline;
+    vertical-align: middle;
+    margin-top: -4px;
+}
+body.daf .actions select{
+    height: 28px;
+    font-size:12px;
+    padding:0;
+    margin-bottom:4px;
+    width:auto;
+}
+body.daf .actions .alert-error{
+    padding: 5px;
+    /*background-color: transparent;*/
+}
+body.daf #result_list th a{
+    color:#333;
+    
+}
+body.daf .actions label,
+body.daf .actions .action-counter{
+    color:#999;
+    font-size:11px;
+}
+body.daf .actions .all,
+body.daf .actions .question,
+body.daf .actions .clear{
+    display:none;
+}
+body.daf #changelist-filter{
+    padding-left:15px;
+}
+body.daf #changelist-filter > h2{
+    color:#666;
+    /*text-shadow: 0 1px 0 rgba(255, 255, 255, 0.5);*/
+    text-shadow:1px 1px 1px white;
+    margin-right: 15px;
+    margin-bottom: 10px;
+    border-bottom: 1px solid #ccc;
+    font-size: 22px;
+}
+body.daf #toolbar{
+    margin-top:0px;
+}
+body.daf .object-tools{
+    margin-left:0;
+}
+body.daf ul.object-tools li{
+    list-style-type: none;
+}
+body.daf #changelist-filter li{
+    list-style-type: none;
+}
+body.daf #changelist-filter h3{
+    text-transform: lowercase;
+    color:#888;
+}
+body.daf #changelist-filter li.selected a{
+    color:gray;
+}
+body.daf .sorted .sortoptions .sortpriority,
+body.daf .sorted .sortoptions .toggle{
+}
+body.daf .sorted .sortoptions .sortpriority{
+    color:#666;
+}
+body.daf table thead th.sorted .sortoptions a{
+    display:inline-block;
+    width: 14px;
+    height: 12px;
+}
+body.daf table thead th.sorted .sortoptions{
+    float:right;
+}
+body.daf table thead th.sorted .sortoptions a.sortremove{
+    background: url(../img/sorting-icons.gif) -4px -5px no-repeat;
+    display:none;
+}
+body.daf table thead th:hover .sortoptions a.sortremove{
+    display:inline-block;
+}
+body.daf table thead th.sorted .sortoptions a.descending {
+    background: url(../img/sorting-icons.gif) -5px -94px no-repeat;
+}
+body.daf table thead th.sorted .sortoptions a.ascending {
+    background: url(../img/sorting-icons.gif) -5px -50px no-repeat;
+}
+body.daf #changelist-filter ul{
+    margin-left:10px;
+}
+body.daf form fieldset .help{
+    color:#999;
+}
+body.daf h2 .object-tools{
+    display:inline-block;
+    font-weight:normal;
+}
+body.daf .btn-xs {
+    padding: 1px 5px;
+    font-size: 12px;
+    line-height: 1.5;
+    border-radius: 3px;
+}
+body.daf fieldset .form-row:last-child{
+    border-bottom:none;
+}
+body.daf .errornote{
+    color:red;
+}
+body.daf fieldset .errors select,
+body.daf fieldset .errors input{
+    border:1px solid red;
+}
+body.daf fieldset ul.errorlist{
+    color:red;
+    list-style:none;
+}
+body.daf fieldset .ui-helper-hidden-accessible{
+    color: #aaa;
+	padding-left: 10px;
+	display: inline-block;
+	vertical-align: text-bottom;
+}
+body.daf .form-row .help-block{
+    padding-left:55px;
+}
+body.daf .form-row .original{
+    display:none;
+}

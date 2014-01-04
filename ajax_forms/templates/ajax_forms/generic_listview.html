@@ -1,0 +1,63 @@
+{% extends "ajax_forms/base.html" %}
+{% load cms staticfiles offer_tags %}
+
+{% block extra-head %}{{ form.media }}{% endblock %}
+
+{% block page-type %}partners{% endblock page-type %}
+
+{% block header_content_left %}
+    <h2>
+        {% if title %}
+            {{ title|safe }}
+        {% else %}
+            {% for breadcrumb in breadcrumbs %}{% if not forloop.first %} &rsaquo; {% endif %}{{ breadcrumb }}{% endfor %}
+        {% endif %}
+    </h2>
+    
+    {% if search_fields %}
+    <div>
+        <br/>
+        <input id="search-box" search-url="{{ request.path }}" type="text" class="search-query" placeholder="Search" value="{{ q }}" />
+        <img id="search-status" src="{% static 'i/pacifier.gif' %}" height="25px" style="vertical-align:top; display:none;" />
+    </div>
+    {% endif %}
+    
+    {% if filter_templates %}
+    <div class="filter-panel-section">
+        <ul role="navigation" class="nav" style="">
+            <li class="dropdown">
+                <button data-toggle="dropdown" class="btn btn dropdown-toggle" role="button" type="submit"><i class="icon-plus"></i> Add Filter</button>
+                <ul id="add-filter-menu" aria-labelledby="drop1" role="menu" class="dropdown-menu">
+                </ul>
+            </li>
+        </ul>
+        <div id="filter-panels" style="float:left;"></div>
+        <div class="divider"></div>
+    </div>
+    {% endif %}
+    
+{% endblock %}
+
+{% block content %}
+    <div class="row-fluid">
+        <div class="span12">
+            <div id="generic-listview-results">
+                {% include 'ajax_forms/generic_listview_results.html' %}
+            </div>
+        </div><!--/span-->
+    </div><!--/row-->
+{% endblock %}
+
+{% block body-footer-javascript %}{{ block.super }}
+    <script language="javascript" type="text/javascript">
+    window.ab.partners_people_list_filter_templates = {{ filter_templates|jsonify }};
+    (function($){
+        $(document).ready(function(){
+            $('#action-go').click(ab.partners_people_list.handle_action_go2);
+            ab.partners_people_list.bind_checkboxes();
+            ab.partners_people_list.bind_select_all();
+            ab.partners_people_list.bind_search_filters();
+        });
+    })(jQuery);
+    </script>
+{% endblock %}

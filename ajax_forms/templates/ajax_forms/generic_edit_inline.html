@@ -1,0 +1,60 @@
+{% load cms %}
+<h3>{{ inline_title|clean_title }}</h3>
+<table id="results" class="table table-striped table-bordered">
+    <thead>
+        <tr>
+            {% for field in field_titles %}
+                <th>{{ field|clean_title }}</th>
+            {% endfor %}
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for object in object_list %}
+        {% include 'ajax_forms/generic_edit_inline_row.html' %}
+    {% endfor %}
+    </tbody>
+    {% if can_add and add_form %}
+        <form
+            id="{{ form_uuid }}"
+            action="?"
+            method="post"
+            ajax-url="{{ ajax_url }}"
+            ajax-channel="{{ ajax_channel }}"
+            class="form-horizontal"
+            enctype="multipart/form-data">
+            <tr>
+                {% for form_field in add_form %}
+                    <td>{{ form_field }}&nbsp;</td>
+                {% endfor %}
+                <td>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </td>
+            </tr>
+        </form>
+        <script language="javascript" type="text/javascript">
+        (function($){
+            $(document).bind('afterready', function(){
+                $('#{{ form_uuid }}').submit(function(){
+                    var el = $(this);
+                    var data = el.serializeObject();
+                    data['ajax_channel'] = el.attr('ajax-channel');
+                    data['ajax_action'] = 'add';
+                    $.ajax({
+                        url:el.attr('ajax-url'),
+                        data:data,
+                        dataType:'json',
+                        success:function(data, status, xhr){
+                            el.closest('table').find("input[type=text], textarea").val("");
+                            var content = $('<div/>').html(data.html).contents();
+                            var tbody = el.closest('table').find('tbody:first');
+                            tbody.append(content.hide().fadeIn('slow'));
+                        }
+                    });
+                    return false;
+                });
+            });
+        })(jQuery);
+        </script>
+    {% endif %}
+</table>

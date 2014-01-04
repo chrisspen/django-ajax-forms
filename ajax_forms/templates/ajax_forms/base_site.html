@@ -1,0 +1,10 @@
+{% extends "ajax_forms/base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }}{# | {% trans 'Django site view' %}#}{% endblock %}
+
+{% block branding %}
+<h1 id="site-name">{% trans site_name %}</h1>
+{% endblock %}
+
+{% block nav-global %}{% endblock %}

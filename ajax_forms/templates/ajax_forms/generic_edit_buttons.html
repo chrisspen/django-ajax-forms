@@ -1,0 +1,9 @@
+<div style="float:left;">
+    <button type="reset" class="btn" title="Sets form fields to original values.">Reset</button>
+    {% for button in extra_buttons %}
+        &nbsp;<a href="{{ button.url }}" class="btn" title="{{ button.short_description }}">{{ button.name }}</a>
+    {% endfor %}
+</div>
+<div style="float:right;">
+    <button type="submit" class="btn btn-primary" name="_continue">Save</button>
+</div>

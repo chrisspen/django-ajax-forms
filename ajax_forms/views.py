@@ -1,11 +1,34 @@
 import re
 import uuid
+from datetime import date
+from collections import namedtuple
+from functools import update_wrapper
 
+from django.views.generic import ListView, TemplateView
+from django.db.models import Q
+from django.contrib.contenttypes.models import ContentType
+from django.template import Context, Template
+from django.utils.html import escape, escapejs
+from django.template.loader import render_to_string
+from django.http import HttpResponse, HttpResponseRedirect
+from django.shortcuts import get_object_or_404
+from django.utils.safestring import mark_safe
+from django.forms.formsets import all_valid
+from django.contrib.admin.util import unquote, flatten_fieldsets, get_deleted_objects, model_format_dict
+from django.core.urlresolvers import reverse
+from django.forms.models import (modelform_factory, modelformset_factory,
+    inlineformset_factory, BaseInlineFormSet)
+from django.http import Http404
 from django import forms
 from django.views.decorators.csrf import csrf_exempt
+from django.contrib.contenttypes import views as contenttype_views
+from django.utils import six
 from django.conf import settings
+from django.contrib.admin import widgets, helpers
+from django.db import models, transaction, router
 from django.http import HttpResponse, Http404
 from django.utils import simplejson
+from django.template.response import SimpleTemplateResponse, TemplateResponse
 from django.views.decorators.http import require_POST
 from django.forms.models import modelformset_factory
 from django.forms.formsets import BaseFormSet
@@ -20,15 +43,884 @@ from django.views.generic.edit import ModelFormMixin
 from django.views.generic.edit import TemplateResponseMixin
 from django.views.generic.edit import ProcessFormView
 from django.views.generic.edit import SingleObjectMixin
+from django.utils.translation import ugettext as _
+from django.utils.translation import ungettext
 from django.utils.safestring import mark_safe
 from django.template import Context, Template
 from django.template.loader import render_to_string, get_template
 from django.db import models
+from django.utils.encoding import force_text
+from django.contrib.admin.options import csrf_protect_m, IncorrectLookupParameters
+from django.contrib.admin.views.main import (ALL_VAR, EMPTY_CHANGELIST_VALUE,
+    ORDER_VAR, PAGE_VAR, SEARCH_VAR)
 
 from ajax_forms.utils import LazyEncoder
 from ajax_forms import constants as C
+from ajax_forms.templatetags.dafhelp import sort_link, clean_title
 
 FORM_SUBMITTED = "valid_submit"
+
+from django.contrib.admin.sites import AdminSite
+from django.contrib.admin.options import ModelAdmin
+
+from django.contrib.admin.views.main import ChangeList
+
+# We need to monkeypatch Changelist.url_for_result because it hardcodes
+# the sitename...
+def _url_for_result(self, result):
+    from django.core.urlresolvers import reverse
+    from django.contrib.admin.util import quote
+    pk = getattr(result, self.pk_attname)
+    return reverse('%s:%s_%s_change' % (self.model_admin.admin_site.name,
+                                        self.opts.app_label,
+                                        self.opts.module_name),
+                   args=(quote(pk),),
+                   current_app=self.model_admin.admin_site.name)
+ChangeList.url_for_result = _url_for_result
+
+from django.contrib.admin.options import InlineModelAdmin as _InlineModelAdmin
+
+class InlineModelAdmin(_InlineModelAdmin):
+
+    can_add_ajax = False
+    
+    can_change_ajax = False
+    
+    def get_formset(self, request, obj=None, **kwargs):
+#        kwargs['has_ajax'] = True
+        formset = super(InlineModelAdmin, self).get_formset(request, obj=obj, **kwargs)
+        #TODO:plug in ajax?
+#        print '*'*80
+#        print 'formset:',formset
+#        print 'has_ajax:',formset.has_ajax
+        return formset
+    
+    def get_ajax_channel(self):
+        return self.model.__name__.lower()
+    
+    def add_view_ajax(self, request, parent_object_id):
+        raise NotImplementedError
+    
+    def change_view_ajax(self, request, parent_object_id, object_id):
+        raise NotImplementedError
+
+class TabularInline(InlineModelAdmin):
+    
+    template = 'ajax_forms/edit_inline/tabular.html'
+
+class SiteView(AdminSite):
+    
+    def __init__(self, *args, **kwargs):
+        super(SiteView, self).__init__(*args, **kwargs)
+        self._path_registry = {} # {model,(app_name, module_name)}
+    
+    def register(self, model_or_iterable, admin_class=None, app_name=None, module_name=None, **options):
+        super(SiteView, self).register(model_or_iterable=model_or_iterable, admin_class=admin_class, **options)
+        app_name = app_name or model_or_iterable._meta.app_label
+        module_name = module_name or model_or_iterable._meta.module_name
+        self._path_registry[model_or_iterable] = (app_name, module_name)
+        
+    def get_urls(self):
+        from django.conf.urls import patterns, url, include
+
+        if settings.DEBUG:
+            self.check_dependencies()
+
+        def wrap(view, cacheable=False):
+            def wrapper(*args, **kwargs):
+                return self.admin_view(view, cacheable)(*args, **kwargs)
+            return update_wrapper(wrapper, view)
+
+        # Admin-site-wide views.
+        urlpatterns = patterns('',
+            url(r'^$',
+                wrap(self.index),
+                name='index'),
+            url(r'^logout/$',
+                wrap(self.logout),
+                name='logout'),
+            url(r'^password_change/$',
+                wrap(self.password_change, cacheable=True),
+                name='password_change'),
+            url(r'^password_change/done/$',
+                wrap(self.password_change_done, cacheable=True),
+                name='password_change_done'),
+            url(r'^jsi18n/$',
+                wrap(self.i18n_javascript, cacheable=True),
+                name='jsi18n'),
+            url(r'^r/(?P<content_type_id>\d+)/(?P<object_id>.+)/$',
+                wrap(contenttype_views.shortcut),
+                name='view_on_site'),
+            url(r'^(?P<app_label>\w+)/$',
+                wrap(self.app_index),
+                name='app_list')
+        )
+
+        # Add in each model's views.
+        for model, model_admin in six.iteritems(self._registry):
+#            print '^'*80
+            app_label, module_name = self._path_registry[model]
+            url_str = r'^%s/%s/' % (app_label, module_name)
+#            print 'app/module:',app_label, module_name
+#            print 'url_str:',url_str
+#            print 'urls:',model_admin.urls
+            urlpatterns += patterns('',
+                url(url_str,
+                    include(model_admin.urls))
+            )
+        return urlpatterns
+
+class ModelView(ModelAdmin):
+    
+    change_list_template = 'ajax_forms/change_list.html'
+    
+    delete_confirmation_template = 'ajax_forms/delete_confirmation.html'
+    
+    delete_selected_confirmation_template = 'ajax_forms/delete_selected_confirmation.html'
+    
+    show_add_button = True
+    
+    add_form_template = 'ajax_forms/change_form.html'
+    
+    change_form_template = 'ajax_forms/change_form.html'
+    
+    save_on_top = True
+    
+    verbose_name = None
+    
+    verbose_name_plural = None
+    
+    add_button_name_template = 'Add %(verbose_name)s'
+    
+    app_label = None
+    
+    module_name = None
+    
+    def get_title(self, request):
+        return
+    
+    def get_urls(self):
+        from django.conf.urls import patterns, url
+
+        def wrap(view):
+            def wrapper(*args, **kwargs):
+                return self.admin_site.admin_view(view)(*args, **kwargs)
+            return update_wrapper(wrapper, view)
+
+        def wrap_inline(view):
+            def wrapper(*args, **kwargs):
+                kwargs['modelview'] = self
+                return self.admin_site.admin_view(view)(*args, **kwargs)
+            return update_wrapper(wrapper, view)
+
+        info = (
+            self.app_label or self.model._meta.app_label,
+            self.module_name or self.model._meta.module_name,
+        )
+#        print 'info:',info
+
+        urlpatterns = patterns('',
+            url(r'^$',
+                wrap(self.changelist_view),
+                name='%s_%s_changelist' % info),
+            url(r'^add/$',
+                wrap(self.add_view),
+                name='%s_%s_add' % info),
+            url(r'^(.+)/history/$',
+                wrap(self.history_view),
+                name='%s_%s_history' % info),
+            url(r'^(.+)/delete/$',
+                wrap(self.delete_view),
+                name='%s_%s_delete' % info),
+            url(r'^([0-9]+)/$',
+                wrap(self.change_view),
+                name='%s_%s_change' % info),
+        )
+        print '&'*80
+        inlines = self.get_inline_instances(request=None)
+        print 'inlines:',inlines
+        for inline in inlines:
+            channel_name = inline.get_ajax_channel()
+            info = (
+                self.app_label or self.model._meta.app_label,
+                self.module_name or self.model._meta.module_name,
+                channel_name,
+            )
+#            print 'inline.can_add_ajax:',inline.can_add_ajax,inline
+            if inline.can_add_ajax:
+                name = '%s_%s_%s_add_ajax' % info
+#                print 'name:',name
+                urlpatterns += patterns('',
+                    url(r'^([0-9]+)/%s/add/ajax/$' % (channel_name,),
+                        wrap_inline(inline.add_view_ajax),
+                        name=name)
+                )
+            if inline.can_change_ajax:
+                name = '%s_%s_%s_change_ajax' % info
+                urlpatterns += patterns('',
+                    url(r'^([0-9]+)/%s/([0-9]+)/ajax/$' % (channel_name,),
+                        wrap_inline(inline.change_view_ajax),
+                        name=name)
+                )
+        
+        print 'urlpatterns:',urlpatterns
+        return urlpatterns
+    
+    def get_extra_context(self, request):
+        context = {}
+        
+        opts = self.model._meta
+        
+        context['search_var'] = SEARCH_VAR
+        
+        list_display = self.get_list_display(request)
+        list_display_links = self.get_list_display_links(request, list_display)
+        list_filter = self.get_list_filter(request)
+
+        context['show_add_button'] = self.show_add_button
+
+        context['verbose_name'] = self.verbose_name or opts.verbose_name
+        context['verbose_name_plural'] = self.verbose_name_plural or opts.verbose_name_plural
+
+        context['add_button_name'] = self.add_button_name_template % dict(verbose_name=context['verbose_name'])
+        
+        title = self.get_title(request)
+        if title:
+            context['title'] = title
+
+        # Check actions to see if any are available on this changelist
+        actions = self.get_actions(request)
+        if actions:
+            # Add the action checkboxes if there are any actions available.
+            list_display = ['action_checkbox'] +  list(list_display)
+        
+        ChangeList = self.get_changelist(request)
+        try:
+            cl = ChangeList(request, self.model, list_display,
+                list_display_links, list_filter, self.date_hierarchy,
+                self.search_fields, self.list_select_related,
+                self.list_per_page, self.list_max_show_all, self.list_editable,
+                self)
+            context['pagination_required'] = (not cl.show_all or not cl.can_show_all) and cl.multi_page
+        except IncorrectLookupParameters, e:
+            pass
+        return context
+    
+    #@csrf_protect_m
+#    def changelist_view(self, request, extra_context=None):
+#        extra_context = extra_context or {}
+#        extra_context.update(self.get_extra_context(request))
+#        return super(ModelView, self).changelist_view(request, extra_context=extra_context)
+
+    def render_change_form(self, request, context, add=False, change=False, form_url='', obj=None):
+        opts = self.model._meta
+        app_label = opts.app_label
+        ordered_objects = opts.get_ordered_objects()
+        context.update({
+            'add': add,
+            'change': change,
+            'has_add_permission': self.has_add_permission(request),
+            'has_change_permission': self.has_change_permission(request, obj),
+            'has_delete_permission': self.has_delete_permission(request, obj),
+            'has_file_field': True, # FIXME - this should check if form or formsets have a FileField,
+            'has_absolute_url': hasattr(self.model, 'get_absolute_url'),
+            'ordered_objects': ordered_objects,
+            'form_url': form_url,
+            'opts': opts,
+            'content_type_id': ContentType.objects.get_for_model(self.model).id,
+            'save_as': self.save_as,
+            'save_on_top': self.save_on_top,
+            'site': self.admin_site,
+        })
+        if add and self.add_form_template is not None:
+            form_template = self.add_form_template
+        else:
+            form_template = self.change_form_template
+
+        return TemplateResponse(request, form_template or [
+            "admin/%s/%s/change_form.html" % (app_label, opts.object_name.lower()),
+            "admin/%s/change_form.html" % app_label,
+            "admin/change_form.html"
+        ], context, current_app=self.admin_site.name)
+
+    def response_add(self, request, obj, post_url_continue=None):
+        """
+        Determines the HttpResponse for the add_view stage.
+        """
+        opts = obj._meta
+        pk_value = obj._get_pk_val()
+
+        msg_dict = {'name': force_text(opts.verbose_name), 'obj': force_text(obj)}
+        # Here, we distinguish between different save types by checking for
+        # the presence of keys in request.POST.
+        if "_continue" in request.POST:
+            msg = _('The %(name)s "%(obj)s" was added successfully. You may edit it again below.') % msg_dict
+            self.message_user(request, msg)
+            if post_url_continue is None:
+                post_url_continue = reverse('%s:%s_%s_change' %
+                                            (self.admin_site.name, opts.app_label, opts.module_name),
+                                            args=(pk_value,),
+                                            current_app=self.admin_site.name)
+            else:
+                try:
+                    post_url_continue = post_url_continue % pk_value
+                    warnings.warn(
+                        "The use of string formats for post_url_continue "
+                        "in ModelAdmin.response_add() is deprecated. Provide "
+                        "a pre-formatted url instead.",
+                        DeprecationWarning, stacklevel=2)
+                except TypeError:
+                    pass
+            if "_popup" in request.POST:
+                post_url_continue += "?_popup=1"
+            return HttpResponseRedirect(post_url_continue)
+
+        if "_popup" in request.POST:
+            return HttpResponse(
+                '<!DOCTYPE html><html><head><title></title></head><body>'
+                '<script type="text/javascript">opener.dismissAddAnotherPopup(window, "%s", "%s");</script></body></html>' % \
+                # escape() calls force_text.
+                (escape(pk_value), escapejs(obj)))
+        elif "_addanother" in request.POST:
+            msg = _('The %(name)s "%(obj)s" was added successfully. You may add another %(name)s below.') % msg_dict
+            self.message_user(request, msg)
+            return HttpResponseRedirect(request.path)
+        else:
+            msg = _('The %(name)s "%(obj)s" was added successfully.') % msg_dict
+            self.message_user(request, msg)
+            return self.response_post_save_add(request, obj)
+
+    def response_change(self, request, obj):
+        """
+        Determines the HttpResponse for the change_view stage.
+        """
+        opts = self.model._meta
+
+        pk_value = obj._get_pk_val()
+
+        msg_dict = {'name': force_text(opts.verbose_name), 'obj': force_text(obj)}
+        if "_continue" in request.POST:
+            msg = _('The %(name)s "%(obj)s" was changed successfully. You may edit it again below.') % msg_dict
+            self.message_user(request, msg)
+            if "_popup" in request.REQUEST:
+                return HttpResponseRedirect(request.path + "?_popup=1")
+            else:
+                return HttpResponseRedirect(request.path)
+        elif "_saveasnew" in request.POST:
+            msg = _('The %(name)s "%(obj)s" was added successfully. You may edit it again below.') % msg_dict
+            self.message_user(request, msg)
+            return HttpResponseRedirect(reverse('%s:%s_%s_change' %
+                                        (self.admin_site.name, opts.app_label, opts.module_name),
+                                        args=(pk_value,),
+                                        current_app=self.admin_site.name))
+        elif "_addanother" in request.POST:
+            msg = _('The %(name)s "%(obj)s" was changed successfully. You may add another %(name)s below.') % msg_dict
+            self.message_user(request, msg)
+            return HttpResponseRedirect(reverse('%s:%s_%s_add' %
+                                        (self.admin_site.name, opts.app_label, opts.module_name),
+                                        current_app=self.admin_site.name))
+        else:
+            msg = _('The %(name)s "%(obj)s" was changed successfully.') % msg_dict
+            self.message_user(request, msg)
+            return self.response_post_save_change(request, obj)
+
+    def response_post_save_add(self, request, obj):
+        """
+        Figure out where to redirect after the 'Save' button has been pressed
+        when adding a new object.
+        """
+        opts = self.model._meta
+        if self.has_change_permission(request, None):
+            post_url = reverse('%s:%s_%s_changelist' %
+                               (self.admin_site.name, opts.app_label, opts.module_name),
+                               current_app=self.admin_site.name)
+        else:
+            post_url = reverse('%s:index' % self.admin_site.name,
+                               current_app=self.admin_site.name)
+        return HttpResponseRedirect(post_url)
+
+    def response_post_save_change(self, request, obj):
+        """
+        Figure out where to redirect after the 'Save' button has been pressed
+        when editing an existing object.
+        """
+        opts = self.model._meta
+        if self.has_change_permission(request, None):
+            post_url = reverse('%s:%s_%s_changelist' %
+                               (self.admin_site.name, opts.app_label, opts.module_name),
+                               current_app=self.admin_site.name)
+        else:
+            post_url = reverse('%s:index' % (self.admin_site.name,),
+                               current_app=self.admin_site.name)
+        return HttpResponseRedirect(post_url)
+
+    def response_action(self, request, queryset):
+        """
+        Handle an admin action. This is called if a request is POSTed to the
+        changelist; it returns an HttpResponse if the action was handled, and
+        None otherwise.
+        """
+
+        # There can be multiple action forms on the page (at the top
+        # and bottom of the change list, for example). Get the action
+        # whose button was pushed.
+        try:
+            action_index = int(request.POST.get('index', 0))
+        except ValueError:
+            action_index = 0
+
+        # Construct the action form.
+        data = request.POST.copy()
+        data.pop(helpers.ACTION_CHECKBOX_NAME, None)
+        data.pop("index", None)
+
+        # Use the action whose button was pushed
+        try:
+            data.update({'action': data.getlist('action')[action_index]})
+        except IndexError:
+            # If we didn't get an action from the chosen form that's invalid
+            # POST data, so by deleting action it'll fail the validation check
+            # below. So no need to do anything here
+            pass
+
+        action_form = self.action_form(data, auto_id=None)
+        action_form.fields['action'].choices = self.get_action_choices(request)
+
+        # If the form's valid we can handle the action.
+        if action_form.is_valid():
+            action = action_form.cleaned_data['action']
+            select_across = action_form.cleaned_data['select_across']
+            func, name, description = self.get_actions(request)[action]
+
+            # Get the list of selected PKs. If nothing's selected, we can't
+            # perform an action on it, so bail. Except we want to perform
+            # the action explicitly on all objects.
+            selected = request.POST.getlist(helpers.ACTION_CHECKBOX_NAME)
+            if not selected and not select_across:
+                # Reminder that something needs to be selected or nothing will happen
+                msg = _("Items must be selected in order to perform "
+                        "actions on them. No items have been changed.")
+                self.message_user(request, msg)
+                return None
+
+            if not select_across:
+                # Perform the action only on the selected objects
+                queryset = queryset.filter(pk__in=selected)
+
+            response = func(self, request, queryset)
+
+            # Actions may return an HttpResponse, which will be used as the
+            # response from the POST. If not, we'll be a good little HTTP
+            # citizen and redirect back to the changelist page.
+            if isinstance(response, HttpResponse):
+                return response
+            else:
+                return HttpResponseRedirect(request.get_full_path())
+        else:
+            msg = _("No action selected.")
+            self.message_user(request, msg)
+            return None
+
+    @csrf_protect_m
+    @transaction.commit_on_success
+    def add_view(self, request, form_url='', extra_context=None):
+        "The 'add' admin view for this model."
+        model = self.model
+        opts = model._meta
+
+        if not self.has_add_permission(request):
+            raise PermissionDenied
+
+        ModelForm = self.get_form(request)
+        formsets = []
+        inline_instances = self.get_inline_instances(request, None)
+        if request.method == 'POST':
+            form = ModelForm(request.POST, request.FILES)
+            if form.is_valid():
+                new_object = self.save_form(request, form, change=False)
+                form_validated = True
+            else:
+                form_validated = False
+                new_object = self.model()
+            prefixes = {}
+            for FormSet, inline in zip(self.get_formsets(request), inline_instances):
+                prefix = FormSet.get_default_prefix()
+                prefixes[prefix] = prefixes.get(prefix, 0) + 1
+                if prefixes[prefix] != 1 or not prefix:
+                    prefix = "%s-%s" % (prefix, prefixes[prefix])
+                formset = FormSet(data=request.POST, files=request.FILES,
+                                  instance=new_object,
+                                  save_as_new="_saveasnew" in request.POST,
+                                  prefix=prefix, queryset=inline.queryset(request))
+                formsets.append(formset)
+            if all_valid(formsets) and form_validated:
+                self.save_model(request, new_object, form, False)
+                self.save_related(request, form, formsets, False)
+                self.log_addition(request, new_object)
+                return self.response_add(request, new_object)
+        else:
+            # Prepare the dict of initial data from the request.
+            # We have to special-case M2Ms as a list of comma-separated PKs.
+            initial = dict(request.GET.items())
+            for k in initial:
+                try:
+                    f = opts.get_field(k)
+                except models.FieldDoesNotExist:
+                    continue
+                if isinstance(f, models.ManyToManyField):
+                    initial[k] = initial[k].split(",")
+            form = ModelForm(initial=initial)
+            prefixes = {}
+            for FormSet, inline in zip(self.get_formsets(request), inline_instances):
+                prefix = FormSet.get_default_prefix()
+                prefixes[prefix] = prefixes.get(prefix, 0) + 1
+                if prefixes[prefix] != 1 or not prefix:
+                    prefix = "%s-%s" % (prefix, prefixes[prefix])
+                formset = FormSet(instance=self.model(), prefix=prefix,
+                                  queryset=inline.queryset(request))
+                formsets.append(formset)
+
+        adminForm = helpers.AdminForm(form, list(self.get_fieldsets(request)),
+            self.get_prepopulated_fields(request),
+            self.get_readonly_fields(request),
+            model_admin=self)
+        media = self.media + adminForm.media
+
+        inline_admin_formsets = []
+        for inline, formset in zip(inline_instances, formsets):
+            fieldsets = list(inline.get_fieldsets(request))
+            readonly = list(inline.get_readonly_fields(request))
+            prepopulated = dict(inline.get_prepopulated_fields(request))
+            inline_admin_formset = helpers.InlineAdminFormSet(inline, formset,
+                fieldsets, prepopulated, readonly, model_admin=self)
+            inline_admin_formsets.append(inline_admin_formset)
+            media = media + inline_admin_formset.media
+
+        context = {
+            'title': _('Add %s') % force_text(opts.verbose_name),
+            'adminform': adminForm,
+            'is_popup': "_popup" in request.REQUEST,
+            'media': media,
+            'inline_admin_formsets': inline_admin_formsets,
+            'errors': helpers.AdminErrorList(form, formsets),
+            'app_label': opts.app_label,
+        }
+        context.update(extra_context or {})
+        return self.render_change_form(request, context, form_url=form_url, add=True)
+
+    @csrf_protect_m
+    @transaction.commit_on_success
+    def change_view(self, request, object_id, form_url='', extra_context=None):
+        "The 'change' admin view for this model."
+        model = self.model
+        opts = model._meta
+
+        obj = self.get_object(request, unquote(object_id))
+
+        if not self.has_change_permission(request, obj):
+            raise PermissionDenied
+
+        if obj is None:
+            raise Http404(_('%(name)s object with primary key %(key)r does not exist.') % {'name': force_text(opts.verbose_name), 'key': escape(object_id)})
+
+        if request.method == 'POST' and "_saveasnew" in request.POST:
+            return self.add_view(request, form_url=reverse('%s:%s_%s_add' %
+                                    (self.admin_site.name, opts.app_label, opts.module_name),
+                                    current_app=self.admin_site.name))
+
+        ModelForm = self.get_form(request, obj)
+        formsets = []
+        inline_instances = self.get_inline_instances(request, obj)
+        if request.method == 'POST':
+            form = ModelForm(request.POST, request.FILES, instance=obj)
+            if form.is_valid():
+                form_validated = True
+                new_object = self.save_form(request, form, change=True)
+            else:
+                form_validated = False
+                new_object = obj
+            prefixes = {}
+            for FormSet, inline in zip(self.get_formsets(request, new_object), inline_instances):
+                prefix = FormSet.get_default_prefix()
+                prefixes[prefix] = prefixes.get(prefix, 0) + 1
+                if prefixes[prefix] != 1 or not prefix:
+                    prefix = "%s-%s" % (prefix, prefixes[prefix])
+                formset = FormSet(request.POST, request.FILES,
+                                  instance=new_object, prefix=prefix,
+                                  queryset=inline.queryset(request))
+
+                formsets.append(formset)
+
+            if all_valid(formsets) and form_validated:
+                self.save_model(request, new_object, form, True)
+                self.save_related(request, form, formsets, True)
+                change_message = self.construct_change_message(request, form, formsets)
+                self.log_change(request, new_object, change_message)
+                return self.response_change(request, new_object)
+
+        else:
+            form = ModelForm(instance=obj)
+            prefixes = {}
+            for FormSet, inline in zip(self.get_formsets(request, obj), inline_instances):
+                prefix = FormSet.get_default_prefix()
+                prefixes[prefix] = prefixes.get(prefix, 0) + 1
+                if prefixes[prefix] != 1 or not prefix:
+                    prefix = "%s-%s" % (prefix, prefixes[prefix])
+                formset = FormSet(instance=obj, prefix=prefix,
+                                  queryset=inline.queryset(request))
+                formsets.append(formset)
+
+        adminForm = helpers.AdminForm(form, self.get_fieldsets(request, obj),
+            self.get_prepopulated_fields(request, obj),
+            self.get_readonly_fields(request, obj),
+            model_admin=self)
+        media = self.media + adminForm.media
+
+        inline_admin_formsets = []
+        for inline, formset in zip(inline_instances, formsets):
+            fieldsets = list(inline.get_fieldsets(request, obj))
+            readonly = list(inline.get_readonly_fields(request, obj))
+            prepopulated = dict(inline.get_prepopulated_fields(request, obj))
+            inline_admin_formset = helpers.InlineAdminFormSet(inline, formset,
+                fieldsets, prepopulated, readonly, model_admin=self)
+            inline_admin_formsets.append(inline_admin_formset)
+            media = media + inline_admin_formset.media
+
+        context = {
+            'title': _('Change %s') % force_text(opts.verbose_name),
+            'adminform': adminForm,
+            'object_id': object_id,
+            'original': obj,
+            'is_popup': "_popup" in request.REQUEST,
+            'media': media,
+            'inline_admin_formsets': inline_admin_formsets,
+            'errors': helpers.AdminErrorList(form, formsets),
+            'app_label': opts.app_label,
+        }
+        context.update(extra_context or {})
+        return self.render_change_form(request, context, change=True, obj=obj, form_url=form_url)
+
+    @csrf_protect_m
+    def changelist_view(self, request, extra_context=None):
+        """
+        The 'change list' admin view for this model.
+        """
+        from django.contrib.admin.views.main import ERROR_FLAG
+        opts = self.model._meta
+        app_label = opts.app_label
+        if not self.has_change_permission(request, None):
+            raise PermissionDenied
+
+        extra_context = extra_context or {}
+        extra_context.update(self.get_extra_context(request))
+
+        list_display = self.get_list_display(request)
+        list_display_links = self.get_list_display_links(request, list_display)
+        list_filter = self.get_list_filter(request)
+
+        # Check actions to see if any are available on this changelist
+        actions = self.get_actions(request)
+        if actions:
+            # Add the action checkboxes if there are any actions available.
+            list_display = ['action_checkbox'] +  list(list_display)
+
+        ChangeList = self.get_changelist(request)
+        try:
+            cl = ChangeList(request, self.model, list_display,
+                list_display_links, list_filter, self.date_hierarchy,
+                self.search_fields, self.list_select_related,
+                self.list_per_page, self.list_max_show_all, self.list_editable,
+                self)
+        except IncorrectLookupParameters:
+            # Wacky lookup parameters were given, so redirect to the main
+            # changelist page, without parameters, and pass an 'invalid=1'
+            # parameter via the query string. If wacky parameters were given
+            # and the 'invalid=1' parameter was already in the query string,
+            # something is screwed up with the database, so display an error
+            # page.
+            if ERROR_FLAG in request.GET.keys():
+                return SimpleTemplateResponse('admin/invalid_setup.html', {
+                    'title': _('Database error'),
+                })
+            return HttpResponseRedirect(request.path + '?' + ERROR_FLAG + '=1')
+
+        # If the request was POSTed, this might be a bulk action or a bulk
+        # edit. Try to look up an action or confirmation first, but if this
+        # isn't an action the POST will fall through to the bulk edit check,
+        # below.
+        action_failed = False
+        selected = request.POST.getlist(helpers.ACTION_CHECKBOX_NAME)
+
+        # Actions with no confirmation
+        if (actions and request.method == 'POST' and
+                'index' in request.POST and '_save' not in request.POST):
+            if selected:
+                response = self.response_action(request, queryset=cl.get_query_set(request))
+                if response:
+                    return response
+                else:
+                    action_failed = True
+            else:
+                msg = _("Items must be selected in order to perform "
+                        "actions on them. No items have been changed.")
+                self.message_user(request, msg)
+                action_failed = True
+
+        # Actions with confirmation
+        if (actions and request.method == 'POST' and
+                helpers.ACTION_CHECKBOX_NAME in request.POST and
+                'index' not in request.POST and '_save' not in request.POST):
+            if selected:
+                response = self.response_action(request, queryset=cl.get_query_set(request))
+                if response:
+                    return response
+                else:
+                    action_failed = True
+
+        # If we're allowing changelist editing, we need to construct a formset
+        # for the changelist given all the fields to be edited. Then we'll
+        # use the formset to validate/process POSTed data.
+        formset = cl.formset = None
+
+        # Handle POSTed bulk-edit data.
+        if (request.method == "POST" and cl.list_editable and
+                '_save' in request.POST and not action_failed):
+            FormSet = self.get_changelist_formset(request)
+            formset = cl.formset = FormSet(request.POST, request.FILES, queryset=cl.result_list)
+            if formset.is_valid():
+                changecount = 0
+                for form in formset.forms:
+                    if form.has_changed():
+                        obj = self.save_form(request, form, change=True)
+                        self.save_model(request, obj, form, change=True)
+                        self.save_related(request, form, formsets=[], change=True)
+                        change_msg = self.construct_change_message(request, form, None)
+                        self.log_change(request, obj, change_msg)
+                        changecount += 1
+
+                if changecount:
+                    if changecount == 1:
+                        name = force_text(opts.verbose_name)
+                    else:
+                        name = force_text(opts.verbose_name_plural)
+                    msg = ungettext("%(count)s %(name)s was changed successfully.",
+                                    "%(count)s %(name)s were changed successfully.",
+                                    changecount) % {'count': changecount,
+                                                    'name': name,
+                                                    'obj': force_text(obj)}
+                    self.message_user(request, msg)
+
+                return HttpResponseRedirect(request.get_full_path())
+
+        # Handle GET -- construct a formset for display.
+        elif cl.list_editable:
+            FormSet = self.get_changelist_formset(request)
+            formset = cl.formset = FormSet(queryset=cl.result_list)
+
+        # Build the list of media to be used by the formset.
+        if formset:
+            media = self.media + formset.media
+        else:
+            media = self.media
+
+        # Build the action form and populate it with available actions.
+        if actions:
+            action_form = self.action_form(auto_id=None)
+            action_form.fields['action'].choices = self.get_action_choices(request)
+        else:
+            action_form = None
+
+        selection_note_all = ungettext('%(total_count)s selected',
+            'All %(total_count)s selected', cl.result_count)
+        #self.admin_site.name
+        context = {
+            'module_name': force_text(opts.verbose_name_plural),
+            'selection_note': _('0 of %(cnt)s selected') % {'cnt': len(cl.result_list)},
+            'selection_note_all': selection_note_all % {'total_count': cl.result_count},
+            'title': cl.title,
+            'site': self.admin_site,
+            'is_popup': cl.is_popup,
+            'cl': cl,
+            'media': media,
+            'has_add_permission': self.has_add_permission(request),
+            'app_label': app_label,
+            'action_form': action_form,
+            'actions_on_top': self.actions_on_top,
+            'actions_on_bottom': self.actions_on_bottom,
+            'actions_selection_counter': self.actions_selection_counter,
+        }
+        context.update(extra_context or {})
+
+        return TemplateResponse(request, self.change_list_template or [
+            'admin/%s/%s/change_list.html' % (app_label, opts.object_name.lower()),
+            'admin/%s/change_list.html' % app_label,
+            'admin/change_list.html'
+        ], context, current_app=self.admin_site.name)
+
+    @csrf_protect_m
+    @transaction.commit_on_success
+    def delete_view(self, request, object_id, extra_context=None):
+        "The 'delete' admin view for this model."
+        opts = self.model._meta
+        app_label = opts.app_label
+
+        obj = self.get_object(request, unquote(object_id))
+
+        if not self.has_delete_permission(request, obj):
+            raise PermissionDenied
+
+        if obj is None:
+            raise Http404(_('%(name)s object with primary key %(key)r does not exist.') % {'name': force_text(opts.verbose_name), 'key': escape(object_id)})
+
+        using = router.db_for_write(self.model)
+
+        # Populate deleted_objects, a data structure of all related objects that
+        # will also be deleted.
+        (deleted_objects, perms_needed, protected) = get_deleted_objects(
+            [obj], opts, request.user, self.admin_site, using)
+
+        if request.POST: # The user has already confirmed the deletion.
+            if perms_needed:
+                raise PermissionDenied
+            obj_display = force_text(obj)
+            self.log_deletion(request, obj, obj_display)
+            self.delete_model(request, obj)
+
+            self.message_user(request, _('The %(name)s "%(obj)s" was deleted successfully.') % {'name': force_text(opts.verbose_name), 'obj': force_text(obj_display)})
+
+            if not self.has_change_permission(request, None):
+                return HttpResponseRedirect(reverse('%s:index' % self.admin_site.name,
+                                                    current_app=self.admin_site.name))
+            return HttpResponseRedirect(reverse('%s:%s_%s_changelist' %
+                                        (self.admin_site.name, opts.app_label, opts.module_name),
+                                        current_app=self.admin_site.name))
+
+        object_name = force_text(opts.verbose_name)
+
+        if perms_needed or protected:
+            title = _("Cannot delete %(name)s") % {"name": object_name}
+        else:
+            title = _("Are you sure?")
+
+        context = {
+            "title": title,
+            "object_name": object_name,
+            "object": obj,
+            "deleted_objects": deleted_objects,
+            "perms_lacking": perms_needed,
+            "protected": protected,
+            "opts": opts,
+            "app_label": app_label,
+            "site": self.admin_site,
+        }
+        context.update(extra_context or {})
+
+        return TemplateResponse(request, self.delete_confirmation_template or [
+            "admin/%s/%s/delete_confirmation.html" % (app_label, opts.object_name.lower()),
+            "admin/%s/delete_confirmation.html" % app_label,
+            "admin/delete_confirmation.html"
+        ], context, current_app=self.admin_site.name)
+
 
 class ValidationError(Exception):
     pass
@@ -904,3 +1796,693 @@ def AjaxSubForm(form_cls, slug, **kwargs):
         setattr(new_cls, k, v)
     register_ajax_cls(new_cls, slug)
     return new_cls
+
+class B(object):
+    
+    def __init__(self, inline, object, request):
+        self.inline = inline
+        self.object = object
+        self.request = request
+        
+    def __iter__(self):
+        for fn in self.inline.list_display:
+            if hasattr(self.object, fn):
+                value = getattr(self.object, fn)
+            elif hasattr(self.inline, fn):
+                func = getattr(self.inline, fn)
+                value = func(request=self.request, obj=self.object)
+                if hasattr(func, 'allow_tags') and func.allow_tags:
+                    value = mark_safe(value)
+            yield value
+
+Button = namedtuple('Button', ['name', 'url', 'short_description'])
+
+Action = namedtuple('Action', ['name', 'short_description'])
+
+class A(object):
+    
+    def __init__(self, inline, objects, request):
+        self.inline = inline
+        self.objects = objects
+        self.request = request
+        
+    def __iter__(self):
+        for object in self.objects:
+            yield B(inline=self.inline, object=object, request=self.request)
+
+class BaseInlineView(object):
+    
+    template_name = 'ajax_forms/generic_edit_inline.html'
+    template_row_name = 'ajax_forms/generic_edit_inline_row.html'
+    
+    model = None
+    
+    fk_name = None
+    
+    list_display = ()
+    
+    collapsable = True
+    
+    collapsed = False
+    
+    can_add = True
+    
+    add_form = None
+    
+    can_delete = True
+    
+    def get_ajax_channel(self):
+        return self.model.__name__.lower()
+    
+    def process_ajax_add(self, request, obj):
+        raise NotImplementedError
+    
+    def get_context_data(self, *args, **kwargs):
+        return dict()
+    
+    def get_queryset(self, object):
+        if not object:
+            return
+        if self.fk_name:
+            return getattr(object, self.fk_name).all()
+        matching_fields = [(_.get_accessor_name(), _.model) for _ in object._meta.get_all_related_objects() if _.model == self.model]
+        if len(matching_fields) > 1:
+            raise Exception, 'Ambiguous relation. Please specify fk_name.'
+        elif not matching_fields:
+            raise Exception, 'No matching field related to model %s.' % (self.model,)
+        name = matching_fields[0][0]
+        return getattr(object, name).all()
+    
+    def get_field_titles(self):
+        for fn in self.list_display:
+            if hasattr(self, fn) and hasattr(getattr(self, fn), 'short_description'):
+                yield getattr(getattr(self, fn), 'short_description')
+            elif self.model._meta.get_field(fn) and self.model._meta.get_field(fn).verbose_name:
+                yield self.model._meta.get_field(fn).verbose_name
+            else:
+                yield fn
+    
+    def get_title(self):
+        if isinstance(self.model._meta.verbose_name_plural, basestring):
+            return self.model._meta.verbose_name_plural
+        return self.model.__name__ + 's'
+    
+    def get_add_form(self):
+        return self.add_form
+    
+    def render(self, request, obj):
+        
+        data = self.get_context_data()
+        data['object'] = obj
+        data['request'] = request
+        data['object_list'] = self.get_queryset(obj)
+        data['field_titles'] = self.get_field_titles()
+        data['inline_title'] = self.get_title()
+        data['object_list'] = A(inline=self, objects=data['object_list'], request=request)
+        data['can_add'] = self.can_add
+        data['can_delete'] = self.can_delete
+        data['add_form'] = self.get_add_form()
+        data['form_uuid'] = '_'+str(uuid.uuid4()).replace('-', '')
+        data['ajax_channel'] = self.get_ajax_channel()
+        data['ajax_url'] = request.path
+        content = render_to_string(self.template_name, data)
+        return content
+
+class _CommonViewMixin(object):
+    """
+    Contains variables and methods used by both edit and list views.
+    """
+    
+    model = None
+    
+    model_name = None
+    
+    verb = None
+    
+    def get_model_name(self):
+        if self.model_name:
+            s = self.model_name.strip()
+        elif self.model:
+            if self.model._meta.verbose_name:
+                s = self.model._meta.verbose_name.strip()
+            else:
+                s = type(self.model).__name__.strip()
+        else:
+            raise NotImplementedError, 'No model name defined.'
+        return s[0].upper() + s[1:]
+    
+    def get_verb(self):
+        return self.verb
+    
+    def get_breadcrumbs(self):
+        return [self.get_model_name(), self.get_verb()]
+
+class BaseEditView(TemplateView, _CommonViewMixin):
+    
+    template_name = 'ajax_forms/generic_edit.html'
+    
+    object_id_kwargs_field = 'object_id'
+    
+    form = None
+    
+    inlines = ()
+    
+    extra_buttons = []
+    
+    def get_form(self):
+        """
+        Returns the form class to instantiate.
+        """
+        if not self.form:
+            raise NotImplementedError, "A form class is not defined."
+        return self.form
+    
+    def get_form_initial(self):
+        return {}
+    
+    def get_form_params(self):
+        request = self.request
+        args = []
+        kwargs = dict(
+            initial=self.get_form_initial(),
+        )
+        if request.POST:
+            kwargs['data'] = request.POST
+            kwargs['files'] = request.FILES
+        return args, kwargs
+    
+    def get_form_instance(self):
+        args, kwargs = self.get_form_params()
+        form = self.get_form()(*args, **kwargs)
+        return form
+    
+    def get_extra_buttons(self):
+        lst = list()
+        object = self.get_object()
+        for _btn in self.extra_buttons:
+            if not _btn.url:
+                continue
+            btn = Button(
+                name=_btn.name,
+                url=_btn.url(object) if callable(_btn.url) else _btn.url,
+                short_description=_btn.short_description)
+            lst.append(btn)
+        return lst
+    
+    @property
+    def object_id(self):
+        return self.kwargs.get(self.object_id_kwargs_field)
+    
+    def get_object(self):
+        if self.object_id:
+            try:
+                return self.model.objects.get(id=self.object_id)
+            except self.model.DoesNotExist:
+                raise Http404
+    
+    def get_verb(self):
+        if self.object_id:
+            return 'Edit'
+        return 'Create'
+    
+    def get_context_data(self, *args, **kwargs):
+        ctx = super(TemplateView, self).get_context_data(*args, **kwargs)
+        ctx['breadcrumbs'] = self.get_breadcrumbs()
+        ctx['object'] = self.get_object()
+        ctx['form'] = self.get_form_instance()
+        ctx['inlines'] = []
+        ctx['extra_buttons'] = self.get_extra_buttons()
+        if ctx['object']:
+            ctx['inlines'] = [
+                _().render(request=self.request, obj=ctx['object'])
+                for _ in self.inlines
+            ]
+        return ctx
+
+    def process_ajax(self, *args, **kwargs):
+        ajax_channel = self.request.REQUEST['ajax_channel']
+        for inline in self.inlines:
+            obj = inline()
+            if obj.get_ajax_channel() == ajax_channel:
+                ajax_action = self.request.REQUEST.get('ajax_action', '')
+                if ajax_action:
+                    return obj.process_ajax_add(request=self.request, obj=self.get_object())
+        raise Http404
+
+    def check_access(self):
+        """
+        Called at the beginning of both get() and post().
+        Returns a response object if the remaining of get() and post()
+        should be aborted.
+        Useful for performing various permission checks that redirect
+        to special pages.
+        """
+        #e.g.
+        #if not self.request.user.is_staff:
+        #    return HttpResponseRedirect(urlresolvers.reverse('permission_denied'))
+
+    def get(self, *args, **kwargs):
+        resp = self.check_access()
+        if resp:
+            return resp
+        if self.request.REQUEST.get('ajax_channel'):
+            return self.process_ajax(*args, **kwargs)
+        return super(BaseEditView, self).get(*args, **kwargs)
+
+    def post(self, *args, **kwargs):
+        resp = self.check_access()
+        if resp:
+            return resp
+        if self.request.REQUEST.get('ajax_channel'):
+            return self.process_ajax(*args, **kwargs)
+        request = self.request
+        form = self.get_form_instance()
+        if request.POST and form.is_valid():
+            resp = form.save()
+            if resp:
+                return resp
+            else:
+                return HttpResponseRedirect(request.META.get('HTTP_REFERER'))
+        return super(BaseEditView, self).get(*args, **kwargs)
+
+class ColumnField(object):
+    
+    def __init__(self, request, name, label, param, default, sort_field):
+        self.request = request
+        self.name = name
+        self.label = label
+        self.param = param
+        self.default = default
+        self.sort_field = sort_field
+        
+    def as_link(self):
+        if self.sort_field:
+            return sort_link(
+                self.request,
+                param_name=self.param,
+                field_name=self.name,
+                default=self.default,
+                label=clean_title(self.label),
+                #label=self.sort_field,
+            )
+        else:
+            return clean_title(self.label)
+
+from django.contrib.admin.options import ModelAdmin
+
+class BaseListView(ListView, _CommonViewMixin):
+
+    paginate_by = 15
+    
+    title = None
+    
+    search_fields = ()
+    
+    list_display = ()
+    
+    list_display_links = ()
+    
+    list_filter = ()
+    
+    filter_templates = {}
+    
+    actions = ()
+    
+    verb = 'List'
+    
+    ordering = []
+    
+    ordering_param = 'o'
+    
+    @property
+    def template_name(self):
+        if self.ajax:
+            return 'ajax_forms/generic_listview_results.html'
+        else:
+            return 'ajax_forms/generic_listview.html'
+    
+    @property
+    def q(self):
+        return self.request.GET.get('q', '').strip()
+    
+    @property
+    def ajax(self):
+        return self.request.REQUEST.get('ajax', '').lower() in ('1', 'true')
+    
+    def get_actions(self):
+        return self.actions
+    
+    def get_filter_dict(self):
+        if hasattr(self, '_filter_dict') and self._filter_dict:
+            return self._filter_dict
+        d = self._filter_dict = {}
+        request = self.request
+        for lf_name, lf_query, lf_filter, lf_func, lf_func_value_name, lf_func_order_by in self.list_filter:
+            try:
+                d[lf_name] = request.GET.get(lf_name, '')
+                clean_name = 'clean_%s' % lf_name
+                if hasattr(self, clean_name):
+                    d[lf_name] = getattr(self, clean_name)(d[lf_name])
+            except Exception, e:
+                raise
+        return d
+    
+    def get_queryset_all(self):
+        return self.model.objects.all()
+    
+    def get_order_by(self):
+        ordering = self.request.GET.get('o', ','.join(self.ordering or []))
+        ordering = ordering.replace(' ','').split(',')
+        return [_ for _ in ordering if _.strip()]
+    
+    def get_queryset(self):
+        q = self.get_queryset_all()
+        
+        qtext = self.q
+        subq = None
+        #print 'self.search_fields:',self.search_fields
+        if qtext:
+            #TODO:support __search with fulltext index?
+            for sf in self.search_fields:
+                _subq = Q(**{sf+'__icontains': qtext})
+                if subq is None:
+                    subq = _subq
+                else:
+                    subq |= _subq
+            #print 'subq:',subq
+            if subq:
+                q = q.filter(subq)
+        
+        filter_dict = self.get_filter_dict()
+        for lf_name, lf_query, lf_field, lf_func, lf_func_value_name, lf_func_order_by in self.list_filter:
+#            print 'get_queryset:',lf_name, lf_query, lf_field, lf_func
+            v = filter_dict.get(lf_name)
+#            print 'v:',repr(v),type(v)
+            if v is None or v == '':
+                continue
+            q = q.filter(**{lf_query: v})
+#            if lf_func_order_by:
+#                q = lf_func_order_by(q)
+#        print '='*80
+#        print 'count:',q.count()
+
+        order_by = self.get_order_by()
+        if order_by:
+            order_by_helper = [((o[1:], 'desc') if o.startswith('-') else (o, 'asc')) for o in order_by]
+            q = q.order_by(*order_by)
+
+        return q
+    
+    def get_object_url(self, obj):
+        todo
+    
+    def get_single_name(self):
+        return self.model.__name__
+    
+    def get_plural_name(self):
+        return self.model.__name__ + 's'
+    
+    def get_context_data(self, *args, **kwargs):
+        
+        self._filter_dict = {}
+        
+        ctx = super(BaseListView, self).get_context_data(*args, **kwargs)
+        ctx['breadcrumbs'] = self.get_breadcrumbs()
+        ctx['search_fields'] = self.search_fields
+        ctx['list_filter'] = self.list_filter
+        ctx['list_display'] = self.list_display
+        ctx['filter_templates'] = self.filter_templates
+        actions = []
+        verbose_name = self.get_single_name().lower()
+        verbose_name_plural = self.get_plural_name().lower()
+        for action in self.get_actions():
+            func = None
+            name = None
+            if isinstance(action, basestring) and hasattr(self, action):
+                func = getattr(self, action)
+                #print 'func:',func
+                name = action
+                short_description = getattr(func, 'short_description', action) % dict(verbose_name_plural=verbose_name_plural)
+                #print 'short_description:',short_description
+                actions.append(Action(
+                    name=action,
+                    short_description=short_description,
+                ))
+#        print 'actions:',actions
+        ctx['actions'] = actions
+        ctx['q'] = self.q
+                
+        queryset = kwargs.get('object_list')
+        request = self.request
+        filter_dict = self.get_filter_dict()
+        page_size = self.get_paginate_by(queryset)
+        
+        field_titles = []
+        all_model_field_names = set(self.model._meta.get_all_field_names())
+        for field in self.list_display:
+            if hasattr(self, field) and hasattr(getattr(self, field), 'short_description'):
+                kwargs = dict(
+                    request=self.request,
+                    label=getattr(self, field).short_description,
+                    name=field,
+                    param=self.ordering_param,
+                    default=self.get_order_by(),
+                    sort_field=getattr(getattr(self, field), 'order_field', None),
+                )
+            elif hasattr(self.model, field) and hasattr(getattr(self.model, field), 'short_description'):
+                kwargs = dict(
+                    request=self.request,
+                    label=getattr(self.model, field).short_description,
+                    name=field,
+                    param=self.ordering_param,
+                    default=self.get_order_by(),
+                    sort_field=getattr(getattr(self.model, field), 'order_field', None),
+                )
+            else:
+                kwargs = dict(
+                    request=self.request,
+                    label=field,
+                    name=field,
+                    param=self.ordering_param,
+                    default=self.get_order_by(),
+                    sort_field=field if field in all_model_field_names else None,
+                )
+            field_titles.append(ColumnField(**kwargs))
+        ctx['field_titles'] = field_titles
+        
+        actions = self.get_actions()
+        valid_actions = set(actions)
+        
+        list_filter_results = []
+        #print 'filter_dict:',filter_dict
+        for lf_name, lf_query, lf_filter, lf_func, lf_func_value_name, lf_func_order_by in self.list_filter:
+            unique_values = set()
+            nq = queryset.values(lf_filter).distinct()
+            if lf_func_order_by:
+                nq = lf_func_order_by(nq)
+            final_label_values = []
+            for r in nq:
+                if lf_func:
+                    unique_key = lf_func(r[lf_filter])
+                else:
+                    unique_key = r[lf_filter]
+                if unique_key in unique_values:
+                    continue
+                unique_values.add(unique_key)
+                final_label_values.append((
+                    unique_key,
+                    lf_func_value_name(unique_key),
+                    str(filter_dict.get(lf_name)) == str(unique_key),
+                ))
+                
+            list_filter_results.append((lf_name, final_label_values))
+#            list_filter_results.append((
+#                lf_name,
+#                sorted((
+#                    _v,
+#                    lf_func_value_name(_v),
+#                    str(filter_dict.get(lf_name)) == str(_v),)
+#                    for _v in unique_values),
+#            ))
+        #print 'list_filter_results:',list_filter_results
+        
+        path = '/' + ('/'.join([_ for _ in request.path.split('/') if _.strip()][:-1])) + '/'
+        action = request.POST.get('action')
+#        print '!'*80
+#        print 'post:',request.POST
+#        print 'request:',request.REQUEST
+#        print 'action:',action
+#        print 'valid_actions:',valid_actions
+        next_url = None
+        if action in valid_actions and hasattr(self, action):
+            next_url = request.REQUEST.get('next_url')
+            obj_ids = request.REQUEST.get('obj_ids', '')
+            action_queryset = queryset
+            if obj_ids != 'all':
+                obj_ids = map(int, obj_ids.split(','))
+                action_queryset = action_queryset.filter(id__in=obj_ids)
+            response = getattr(self, action)(request, action_queryset)
+#            print 'response:',response
+            if isinstance(response, HttpResponse):
+                return response
+            #sys.exit()
+            return HttpResponseRedirect(next_url)
+        
+        ctx['list_filter_results'] = list_filter_results
+        
+        class B(list):
+            """
+            Proxy object for each queryset record.
+            """
+            
+            def __init__(self, *args):
+                super(list, self).__init__(*args)
+                self.id = None
+        
+        class A(object):
+            """
+            Wrapper around the queryset to allow easily iterating over fields
+            in the template.
+            """
+            def __init__(self, lv, object_list):
+                self.lv = lv
+                self.object_list = object_list
+            def __iter__(self):
+                for obj in self.object_list:
+                    o = B()
+                    o.id = obj.id
+                    made_link = False
+                    for k in self.lv.list_display:
+                        if hasattr(self.lv, k):
+                            func = getattr(self.lv, k)
+                            value = func(obj)
+                            if hasattr(func, 'allow_tags') and func.allow_tags:
+                                value = mark_safe(value)
+                            value = value or ''
+                        elif hasattr(obj, k):
+                            value = getattr(obj, k)
+                        else:
+                            raise Exception, 'Invalid column "%s".' % (k,)
+                        
+                        if (not self.lv.list_display_links and not made_link) or k in self.lv.list_display_links:
+                            made_link = True
+                            object_url = self.lv.get_object_url(obj)
+                            if object_url:
+                                value = mark_safe('<a href="%s">%s</a>' % (object_url, value,))
+                            
+                        o.append(value)
+                    yield o
+        
+        ctx['page_obj_iterator'] = A(self, ctx['page_obj'])
+        ctx['list_filter_results'] = list_filter_results
+        ctx['next_url'] = next_url
+        return ctx
+
+    def base_export_csv(self, request, queryset, columns=None):
+        import csv
+        
+        response = HttpResponse(mimetype='text/csv')
+        response['Content-Disposition'] = \
+            'attachment; filename=%s-%i%02i%02i.csv' % (
+            self.get_plural_name().lower(),
+            date.today().year, date.today().month, date.today().day)
+            
+        # Create a CSV writer.
+        writer = csv.writer(response)
+    
+        # Get the IDs and columns to export.
+        #ids =  request.GET.get('ids', '').split(',')
+        #columns =  request.GET.get('columns', '').split(',')
+        columns = columns or self.list_display
+    
+        # Write a header row.
+        writer.writerow(columns)
+    
+        # Write a row for each ID.
+        for obj in queryset:
+            row = []
+            for column in columns: 
+                value = getattr(obj, column)
+                if callable(value):
+                    value = value()
+                row.append(value)
+            writer.writerow(row)
+    
+        return response
+    
+    def get(self, *args, **kwargs):
+        return super(BaseListView, self).get(*args, **kwargs)
+    
+    def post(self, *args, **kwargs):
+        ret = self.get_context_data(object_list=self.get_queryset())
+        if ret and isinstance(ret, HttpResponse):
+            return ret
+        return HttpResponseRedirect(self.request.META.get('HTTP_REFERER'))
+
+from django.views.generic.edit import FormView
+
+class BaseAdminView(FormView):#TemplateView):
+    
+    app_label = '(app_label)'
+    verbose_name = '(verbose_name)'
+    verbose_name_plural = '(verbose_name_plural)'
+    title = '(title)'
+    
+    fieldsets = []
+    
+    #form_class =
+    #success_url = 
+    
+#    def get_form_kwargs(self):
+#        """
+#        Returns the keyword arguments for instantiating the form.
+#        """
+#        super(BaseAdminView, self).get_form_kwargs()
+#        kwargs = {'initial': self.get_initial()}
+#        if self.request.method in ('POST', 'PUT'):
+#            kwargs.update({
+#                'data': self.request.POST,
+#                'files': self.request.FILES,
+#            })
+#        return kwargs
+    
+    def form_valid(self, form):
+        return super(BaseAdminView, self).form_valid(form)
+    
+    def get_context_data(self, *args, **kwargs):
+        from django.contrib import admin
+        ctx = super(BaseAdminView, self).get_context_data(*args, **kwargs)
+
+        # Required boilerplate admin template variables.
+        ctx['title'] = self.title
+        ctx['app_label'] = self.app_label
+        ctx['has_change_permission'] = True
+        class C(object):
+            pass
+        ctx['opts'] = opts = C()
+        opts.app_label = self.app_label
+        opts.object_name = self.app_label
+        opts.verbose_name = self.verbose_name
+        opts.verbose_name_plural = self.verbose_name_plural
+        opts.get_ordered_objects = lambda: []
+        ctx['change'] = False
+        ctx['add'] = 0#True
+        ctx['is_popup'] = False
+        ctx['has_delete_permission'] = False
+        ctx['has_add_permission'] = 0#True
+        ctx['has_change_permission'] = 0#True
+        ctx['has_absolute_url'] = False
+        ctx['save_as'] = False
+        ctx['show_save'] = True
+        ctx['fieldsets'] = self.fieldsets
+        
+        form_class = self.get_form_class()
+        form = self.get_form(form_class)
+        
+        ctx['form'] = form
+        ctx['adminform'] = admin.helpers.AdminForm(
+            form=form,
+            fieldsets=self.fieldsets,
+            prepopulated_fields={})
+
+        return ctx

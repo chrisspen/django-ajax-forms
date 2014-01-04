@@ -1,0 +1,20 @@
+{% load i18n admin_urls daf_help %}
+<div style="float:left;">
+    {% if show_delete_link %}
+        {#<a href="{% url opts|daf_admin_urlname:'delete',site original.pk|admin_urlquote %}" class="deletelink btn btn-danger">{% trans "Delete" %}</a>#}
+        <a href="{% daf_admin_urlname opts 'delete' site original.pk %}" class="deletelink btn btn-danger">{% trans "Delete" %}</a>
+    {% endif %}
+    <button type="reset" class="btn btn-default" title="Sets form fields to original values.">Reset</button>
+    {% for button in extra_buttons %}&nbsp;<a
+        href="{{ button.url }}" class="btn {{ button.classes }}" title="{{ button.short_description }}">{{ button.name }}</a>{% endfor %}
+</div>
+<div style="float:right;">
+    {#{% if show_save %}<button type="submit" class="btn btn-default" name="_continue" {{ onclick_attrib }}>{% trans 'Save' %}</button>{% endif %}#}
+    {% if show_save_as_new %}&nbsp;<input
+        type="submit" class="btn btn-default" value="{% trans 'Save as new' %}" name="_saveasnew" {{ onclick_attrib }}
+    />{%endif%}{% if show_save_and_add_another %}&nbsp;<input
+        type="submit" class="btn btn-default" value="{% trans 'Save and add another' %}" name="_addanother" {{ onclick_attrib }}
+    />{% endif %}{% if show_save_and_continue %}&nbsp;<input
+        type="submit" class="btn btn-primary" value="{% trans 'Save and continue editing' %}" name="_continue" {{ onclick_attrib }}
+     />{% endif %}
+</div>

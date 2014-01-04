@@ -1,0 +1,95 @@
+{% load dafhelp %}
+{% if is_paginated %}
+    <div class="pagination">
+        <ul>
+            {% if page_obj.has_previous %}
+                <li><a href="?{% next_query_string request 'page' page_obj.previous_page_number %}">previous</a></li>
+            {% else %}
+                <li class="active"><a href="#">previous</a></li>
+            {% endif %}
+            {% if page_obj.paginator.page_range|length <= 10 %}
+                {% for page_index in page_obj.paginator.page_range %}
+                    {% if page_index %}
+                        <li{% if page_index == page_obj.number %} class="active"{% endif %}><a href="?{% next_query_string request 'page' page_index %}">{{ page_index }}</a></li>
+                    {% else %}
+                        <li class="active"><a href="#">...</a></li>
+                    {% endif %}
+                {% endfor %}
+            {% else %}
+                {% for page_index in page_obj.paginator.page_range|slice:":3" %}
+                    <li{% if page_index == page_obj.number %} class="active"{% endif %}><a href="?{% next_query_string request 'page' page_index %}">{{ page_index }}</a></li>
+                {% endfor %}
+                {% if page_obj.number <= 3 %}
+                    <li><a href="#">...</a></li>
+                {% else %}
+                    <li><a href="#">...</a></li>
+                    <li class="active"><a href="?{% next_query_string request 'page' page_index %}">{{ page_obj.number }}</a></li>
+                    <li><a href="#">...</a></li>
+                {% endif %}
+                {% for page_index in page_obj.paginator.page_range|slice:"-3:" %}
+                    <li{% if page_index == page_obj.number %} class="active"{% endif %}><a href="?{% next_query_string request 'page' page_index %}">{{ page_index }}</a></li>
+                {% endfor %}
+            {% endif %}
+            {% if page_obj.has_next %}
+                <li><a href="?{% next_query_string request 'page' page_obj.next_page_number %}">next</a></li>
+            {% else %}
+                <li class="active"><a href="#">next</a></li>
+            {% endif %}
+        </ul>
+        <span class="result-count">
+            {{ page_obj.paginator.count }} total {% if page_obj.paginator.count == 1 %}result{% else %}results{% endif %}
+            <a id="select-all" style="display:none;" href="#">Select All</a>
+        </span>
+    </div>
+{% else %}
+    <br/>
+{% endif %}
+<div class="row-fluid">
+    <div class="span10">
+        {% if object_list %}
+        <table id="results" class="table table-striped table-bordered">
+            <thead>
+                <tr>
+                    {% if actions %}<th><input type="checkbox" id="obj-all" value="most" /></th>{% endif %}
+                    {% for field in field_titles %}
+                        {#{% sort_link request 'o' 'name' 'name' %}#}
+                        {#<th>{{ field|clean_title }}</th>#}
+                        <th>{{ field.as_link|safe }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+            {% for obj in page_obj_iterator %}
+                <tr>
+                    {% if actions %}<td><input type="checkbox" class="obj-select-checkbox" id="obj-{{ obj.id }}" value="{{ obj.id }}" /></td>{% endif %}
+                    {% for field_value in obj %}
+                        <td>{{ field_value }}</td>
+                    {% endfor %}
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+           <p>No records found.</p>
+        {% endif %}
+    </div>
+    {% if list_filter_results %}
+        <div class="span2">
+            <div class="well sidebar-nav">
+                <ul class="nav nav-list">
+                {% for lf_name, lf_values in list_filter_results %}
+                    <li class="nav-header">{{ lf_name|clean_title }}:</li>
+                    <li>
+                    <select class="search-filter" style="max-width:150px;" name="{{ lf_name }}">
+                        <option value="">--- Any ---</option>
+                        {% for lf_value, lf_value_name, lf_selected in lf_values %}
+                            <option value="{{ lf_value }}" {% if lf_selected %}selected="selected"{% endif %}>{{ lf_value_name }}</option>
+                        {% endfor %}
+                    </select>
+                    </li>
+                {% endfor %}
+                </ul>
+            </div>
+        </div>
+    {% endif %}
+</div>
