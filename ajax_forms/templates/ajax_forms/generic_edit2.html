@@ -1,0 +1,79 @@
+{% extends "ajax_forms/base_site.html" %}
+{% load i18n admin_static admin_modify daf_help %}
+{% load admin_urls %}
+
+{% block extrahead %}{{ block.super }}
+<script type="text/javascript" src="{% url 'admin:jsi18n' %}"></script>
+{{ media }}
+{% endblock %}
+
+{% block extrastyle %}
+{{ block.super }}<link rel="stylesheet" type="text/css" href="{% static "admin/css/forms.css" %}" />
+	{% block extra_script %}{% endblock %}
+	{% block help %}{% endblock %}
+{% endblock %}
+
+{% block coltype %}{% if ordered_objects %}colMS{% else %}colM{% endif %}{% endblock %}
+
+{% block bodyclass %}{{ block.super }} {{ opts.app_label }}-{{ opts.object_name.lower }} change-form{% endblock %}
+
+{% if not is_popup %}
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+<a href="{% url 'admin:index' %}">{% trans 'Home' %}</a>
+&rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ app_label|capfirst|escape }}</a>
+&rsaquo; {% if has_change_permission %}<a href="{% url opts|admin_urlname:'changelist' %}">{{ opts.verbose_name_plural|capfirst }}</a>{% else %}{{ opts.verbose_name_plural|capfirst }}{% endif %}
+&rsaquo; {% if add %}{% trans 'Add' %} {{ opts.verbose_name }}{% else %}{{ original|truncatewords:"18" }}{% endif %}
+</div>
+{% endblock %}
+{% endif %}
+
+{% block header %}
+    <h2>{% if title %}
+        {{ title|safe }}
+    {% else %}
+        {% for breadcrumb in breadcrumbs %}{% if not forloop.first %} &rsaquo; {% endif %}{{ breadcrumb }}{% endfor %}
+    {% endif %}</h2>
+{% endblock %}
+
+{% block content %}
+    <div id="content-main" class="row-fluid">
+        <div class="span12">
+            <form action="?" method="post" class="" enctype="multipart/form-data">
+                <div class="form-actions form-actions-top">
+                    {% include "ajax_forms/generic_edit_buttons.html" %}
+                </div>
+                {% csrf_token %}
+                <fieldset class="module aligned">
+                {% for field in form %}
+                    <div class="form-row field-{{ field.field.name }} {% if field.errors %}error errors{% endif %}">
+                        <div>
+                            {{ field.errors }}
+                            {{ field.label_tag }} {{ field.field }}
+                        </div>
+                    </div>
+                {% endfor %}
+                </fieldset>
+                <div class="form-actions">
+                    {% include "ajax_forms/generic_edit_buttons.html" %}
+                </div>
+            </form>
+        </div><!--/span-->
+    </div><!--/row-->
+    {% for inline in inlines %}
+    <div class="row-fluid">
+        <div class="span10">
+            {{ inline|safe }}
+        </div>
+    </div>
+    {% endfor %}
+{% endblock %}
+
+{% block body-footer-javascript %}{{ block.super }}
+<script type="text/javascript">
+(function($){
+    $(document).ready(function(){
+    });
+})(jQuery);
+</script>
+{% endblock body-footer-javascript %}

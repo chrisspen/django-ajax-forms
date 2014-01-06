@@ -1,4 +1,4 @@
-{% extends "ajax_forms/base.html" %}
+{% extends "ajax_forms/base_site.html" %}
 
 {% block extra-head %}{{ form.media }}{% endblock %}
 
@@ -12,10 +12,9 @@
 
 {% block content %}
     <div class="row-fluid">
-        <div class="span10">
-            <br/>
-            <div><span class="required">*</span> Indicates a required field.</div>
-            <br/>
+        <div class="span12">
+            {#<br/><div><span class="required">*</span> Indicates a required field.</div>#}
+            {#<br/>#}
             <form action="?" method="post" class="form-horizontal" enctype="multipart/form-data">
                 <div class="form-actions form-actions-top">
                     {% include "ajax_forms/generic_edit_buttons.html" %}

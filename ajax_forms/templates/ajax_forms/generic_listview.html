@@ -3,8 +3,6 @@
 
 {% block extra-head %}{{ form.media }}{% endblock %}
 
-{% block page-type %}partners{% endblock page-type %}
-
 {% block header_content_left %}
     <h2>
         {% if title %}
@@ -50,13 +48,8 @@
 
 {% block body-footer-javascript %}{{ block.super }}
     <script language="javascript" type="text/javascript">
-    window.ab.partners_people_list_filter_templates = {{ filter_templates|jsonify }};
     (function($){
         $(document).ready(function(){
-            $('#action-go').click(ab.partners_people_list.handle_action_go2);
-            ab.partners_people_list.bind_checkboxes();
-            ab.partners_people_list.bind_select_all();
-            ab.partners_people_list.bind_search_filters();
         });
     })(jQuery);
     </script>

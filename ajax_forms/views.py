@@ -80,6 +80,46 @@ ChangeList.url_for_result = _url_for_result
 
 from django.contrib.admin.options import InlineModelAdmin as _InlineModelAdmin
 
+#Button = namedtuple('Button', ['name', 'url', 'short_description'])
+
+class Button(object):
+    
+    def __init__(self, **kwargs):
+        self.__dict__.update(dict(
+            url=None,
+            view=None,
+            classes='btn btn-default',
+            short_description='button',
+            help_text=None,
+            model_view=None,
+        ))
+        self.__dict__.update(kwargs)
+        
+    def get_url(self, obj=None, get_reverse_args=None):
+        url = None
+        try:
+            opts = self.model_view.model._meta
+            if self.url:
+                url = self.url
+            elif isinstance(self.view, basestring):
+                #reverse('%s:%s_%s_change' %
+                view_name = self.view.format(
+                    site_name=self.model_view.admin_site.name,
+                    app_label=opts.app_label,
+                    module_name=opts.module_name)
+                #print 'view_name:',view_name
+                args = []
+                if callable(get_reverse_args):
+                    args = get_reverse_args(self.model_view, obj)
+                elif obj:
+                    args.append(obj.id)
+                url = reverse(view_name, args=args)
+            else:
+                raise NotImplementedError
+        except Exception, e:
+            print 'error:',e
+        return url
+
 class InlineModelAdmin(_InlineModelAdmin):
 
     can_add_ajax = False
@@ -196,6 +236,8 @@ class ModelView(ModelAdmin):
     
     module_name = None
     
+    extra_buttons = []
+    
     def get_title(self, request):
         return
     
@@ -236,9 +278,9 @@ class ModelView(ModelAdmin):
                 wrap(self.change_view),
                 name='%s_%s_change' % info),
         )
-        print '&'*80
+        #print '&'*80
         inlines = self.get_inline_instances(request=None)
-        print 'inlines:',inlines
+        #print 'inlines:',inlines
         for inline in inlines:
             channel_name = inline.get_ajax_channel()
             info = (
@@ -263,15 +305,34 @@ class ModelView(ModelAdmin):
                         name=name)
                 )
         
-        print 'urlpatterns:',urlpatterns
         return urlpatterns
     
+    def get_extra_buttons(self):
+        lst = list()
+        #object = self.get_object()
+        for _btn in self.extra_buttons:
+#            if not _btn.url:
+#                continue
+#            btn = Button(
+#                name=_btn.name,
+#                url=_btn.url(object) if callable(_btn.url) else _btn.url,
+#                short_description=_btn.short_description)
+            btn = Button(**_btn.__dict__)
+            btn.model_view = self
+            lst.append(btn)
+        print '#'*80
+        print 'get_extra_buttons:',lst
+        return lst
+    
     def get_extra_context(self, request):
+        print '@'*80
+        print 'get_extra_context:'
         context = {}
         
         opts = self.model._meta
         
         context['search_var'] = SEARCH_VAR
+        context['extra_buttons'] = self.get_extra_buttons()
         
         list_display = self.get_list_display(request)
         list_display_links = self.get_list_display_links(request, list_display)
@@ -285,6 +346,8 @@ class ModelView(ModelAdmin):
         context['add_button_name'] = self.add_button_name_template % dict(verbose_name=context['verbose_name'])
         
         title = self.get_title(request)
+#        print '~'*80
+#        print 'title:',title
         if title:
             context['title'] = title
 
@@ -331,7 +394,11 @@ class ModelView(ModelAdmin):
             'save_as': self.save_as,
             'save_on_top': self.save_on_top,
             'site': self.admin_site,
+            #'extra_buttons': [123],
         })
+        title = self.get_title(request)
+        if title:
+            context['title'] = title
         if add and self.add_form_template is not None:
             form_template = self.add_form_template
         else:
@@ -697,8 +764,14 @@ class ModelView(ModelAdmin):
             'errors': helpers.AdminErrorList(form, formsets),
             'app_label': opts.app_label,
         }
-        context.update(extra_context or {})
-        return self.render_change_form(request, context, change=True, obj=obj, form_url=form_url)
+        
+        extra_context = extra_context or {}
+        extra_context.update(self.get_extra_context(request))
+        context.update(extra_context)
+        print 'eb:',context['extra_buttons']
+        
+        return self.render_change_form(
+            request, context, change=True, obj=obj, form_url=form_url)
 
     @csrf_protect_m
     def changelist_view(self, request, extra_context=None):
@@ -1815,8 +1888,6 @@ class B(object):
                     value = mark_safe(value)
             yield value
 
-Button = namedtuple('Button', ['name', 'url', 'short_description'])
-
 Action = namedtuple('Action', ['name', 'short_description'])
 
 class A(object):
@@ -1980,13 +2051,15 @@ class BaseEditView(TemplateView, _CommonViewMixin):
         lst = list()
         object = self.get_object()
         for _btn in self.extra_buttons:
-            if not _btn.url:
-                continue
-            btn = Button(
-                name=_btn.name,
-                url=_btn.url(object) if callable(_btn.url) else _btn.url,
-                short_description=_btn.short_description)
+#            if not _btn.url:
+#                continue
+#            btn = Button(
+#                name=_btn.name,
+#                url=_btn.url(object) if callable(_btn.url) else _btn.url,
+#                short_description=_btn.short_description)
             lst.append(btn)
+        print '#'*80
+        print 'get_extra_buttons:',lst
         return lst
     
     @property

@@ -6,7 +6,9 @@
     {% endif %}
     <button type="reset" class="btn btn-default" title="Sets form fields to original values.">Reset</button>
     {% for button in extra_buttons %}&nbsp;<a
-        href="{{ button.url }}" class="btn {{ button.classes }}" title="{{ button.short_description }}">{{ button.name }}</a>{% endfor %}
+        href="{% daf_render_button_url button original %}"
+        class="btn {{ button.classes }}"{% if button.help_text %}
+        title="{{ button.help_text }}"{% endif %}>{{ button.short_description }}</a>{% endfor %}
 </div>
 <div style="float:right;">
     {#{% if show_save %}<button type="submit" class="btn btn-default" name="_continue" {{ onclick_attrib }}>{% trans 'Save' %}</button>{% endif %}#}
