@@ -224,6 +224,8 @@ class ModelView(ModelAdmin):
     
     change_form_template = 'ajax_forms/change_form.html'
     
+    object_id_kwargs_field = 'object_id'
+    
     save_on_top = True
     
     verbose_name = None
@@ -241,6 +243,17 @@ class ModelView(ModelAdmin):
     def get_title(self, request):
         return
     
+#    @property
+#    def object_id(self):
+#        return self.kwargs.get(self.object_id_kwargs_field)
+#    
+#    def get_object(self):
+#        if self.object_id:
+#            try:
+#                return self.model.objects.get(id=self.object_id)
+#            except self.model.DoesNotExist:
+#                raise Http404
+            
     def get_urls(self):
         from django.conf.urls import patterns, url
 
@@ -307,7 +320,7 @@ class ModelView(ModelAdmin):
         
         return urlpatterns
     
-    def get_extra_buttons(self):
+    def get_extra_buttons(self, request, obj=None):
         lst = list()
         #object = self.get_object()
         for _btn in self.extra_buttons:
@@ -320,19 +333,19 @@ class ModelView(ModelAdmin):
             btn = Button(**_btn.__dict__)
             btn.model_view = self
             lst.append(btn)
-        print '#'*80
-        print 'get_extra_buttons:',lst
+#        print '#'*80
+#        print 'get_extra_buttons:',lst
         return lst
     
-    def get_extra_context(self, request):
-        print '@'*80
-        print 'get_extra_context:'
+    def get_extra_context(self, request, obj=None):
+#        print '@'*80
+#        print 'get_extra_context:',obj
         context = {}
         
         opts = self.model._meta
         
         context['search_var'] = SEARCH_VAR
-        context['extra_buttons'] = self.get_extra_buttons()
+        context['extra_buttons'] = self.get_extra_buttons(request, obj)
         
         list_display = self.get_list_display(request)
         list_display_links = self.get_list_display_links(request, list_display)
@@ -588,6 +601,17 @@ class ModelView(ModelAdmin):
             self.message_user(request, msg)
             return None
 
+    def get_add_view_initial(self, request):
+        initial = dict(request.GET.items())
+        for k in initial:
+            try:
+                f = opts.get_field(k)
+            except models.FieldDoesNotExist:
+                continue
+            if isinstance(f, models.ManyToManyField):
+                initial[k] = initial[k].split(",")
+        return initial
+
     @csrf_protect_m
     @transaction.commit_on_success
     def add_view(self, request, form_url='', extra_context=None):
@@ -628,14 +652,7 @@ class ModelView(ModelAdmin):
         else:
             # Prepare the dict of initial data from the request.
             # We have to special-case M2Ms as a list of comma-separated PKs.
-            initial = dict(request.GET.items())
-            for k in initial:
-                try:
-                    f = opts.get_field(k)
-                except models.FieldDoesNotExist:
-                    continue
-                if isinstance(f, models.ManyToManyField):
-                    initial[k] = initial[k].split(",")
+            initial = self.get_add_view_initial(request)
             form = ModelForm(initial=initial)
             prefixes = {}
             for FormSet, inline in zip(self.get_formsets(request), inline_instances):
@@ -766,9 +783,9 @@ class ModelView(ModelAdmin):
         }
         
         extra_context = extra_context or {}
-        extra_context.update(self.get_extra_context(request))
+        extra_context.update(self.get_extra_context(request, obj))
         context.update(extra_context)
-        print 'eb:',context['extra_buttons']
+        #print 'eb:',context['extra_buttons']
         
         return self.render_change_form(
             request, context, change=True, obj=obj, form_url=form_url)
@@ -2051,15 +2068,7 @@ class BaseEditView(TemplateView, _CommonViewMixin):
         lst = list()
         object = self.get_object()
         for _btn in self.extra_buttons:
-#            if not _btn.url:
-#                continue
-#            btn = Button(
-#                name=_btn.name,
-#                url=_btn.url(object) if callable(_btn.url) else _btn.url,
-#                short_description=_btn.short_description)
             lst.append(btn)
-        print '#'*80
-        print 'get_extra_buttons:',lst
         return lst
     
     @property
