@@ -20,6 +20,9 @@ body.daf #result_list th a{
     color:#333;
     
 }
+body.daf #result_list{
+    margin-top: 18px;
+}
 body.daf .actions label,
 body.daf .actions .action-counter{
     color:#999;
@@ -120,13 +123,24 @@ body.daf fieldset ul.errorlist{
 }
 body.daf fieldset .ui-helper-hidden-accessible{
     color: #aaa;
-	padding-left: 10px;
-	display: inline-block;
-	vertical-align: text-bottom;
+    padding-left: 10px;
+    display: inline-block;
+    vertical-align: text-bottom;
 }
 body.daf .form-row .help-block{
     padding-left:55px;
 }
 body.daf .form-row .original{
     display:none;
+}
+body.daf .pagination{
+    margin-bottom: 0px;
+}
+body.daf .pagination .result-count{
+    display: inline-block;
+    vertical-align: top;
+    padding-top: 10px;
+    padding-left: 10px;
+    margin: 0;
+    color: #999;
 }
