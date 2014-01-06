@@ -56,7 +56,7 @@ from django.contrib.admin.views.main import (ALL_VAR, EMPTY_CHANGELIST_VALUE,
 
 from ajax_forms.utils import LazyEncoder
 from ajax_forms import constants as C
-from ajax_forms.templatetags.dafhelp import sort_link, clean_title
+from ajax_forms.templatetags.daf_help import sort_link, clean_title
 
 FORM_SUBMITTED = "valid_submit"
 

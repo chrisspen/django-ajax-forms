@@ -31,12 +31,6 @@ setup(
         'Programming Language :: Python',
         'Framework :: Django',
     ],
-    # Make setuptools include all data files under version control,
-    # svn and CVS by default
-    #include_package_data=True,
-    # Tells setuptools to download setuptools_git before running setup.py so
-    # it can find the data files under Git version control.
-    #setup_requires=['setuptools_git'],
     zip_safe = False,
     install_requires = ['Django>=1.4'],
 )
