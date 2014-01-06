@@ -6,6 +6,7 @@ from functools import update_wrapper
 
 from django.views.generic import ListView, TemplateView
 from django.db.models import Q
+from django.core.exceptions import PermissionDenied
 from django.contrib.contenttypes.models import ContentType
 from django.template import Context, Template
 from django.utils.html import escape, escapejs
