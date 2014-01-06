@@ -1,4 +1,5 @@
-from setuptools import setup, find_packages
+
+from setuptools import setup, find_packages, Command
 
 import ajax_forms
 
@@ -6,13 +7,21 @@ setup(
     name='django-ajax-forms',
     version = ajax_forms.__version__,
     description='Provides support for doing validation using Ajax(currently with jQuery) using your existing Django forms.',
-    author='Jonas Geiregat',
-    author_email='jonas@geiregat.org',
-    url='https://github.com/jonasgeiregat/django-ajax-forms',
-    packages=[
-            'ajax_forms',
-            'ajax_forms.templatetags',
+    author='Chris Spencer',
+    author_email='chrisspen@gmail.com',
+    url='https://github.com/chrisspen/django-ajax-forms',
+    packages = find_packages(),
+    package_data = {
+        'ajax_forms': [
+            'templates/*.*',
+            'templates/*/*.*',
+            'templates/*/*/*.*',
+            'templatetags/*.*',
+            'static/*.*',
+            'static/*/*.*',
+            'static/*/*/*.*',
         ],
+    },
     classifiers=[
         'Development Status :: 1 - Alpha',
         'Environment :: Web Environment',
@@ -24,9 +33,10 @@ setup(
     ],
     # Make setuptools include all data files under version control,
     # svn and CVS by default
-    include_package_data=True,
+    #include_package_data=True,
     # Tells setuptools to download setuptools_git before running setup.py so
     # it can find the data files under Git version control.
-    setup_requires=['setuptools_git'],
-    zip_safe=False,
+    #setup_requires=['setuptools_git'],
+    zip_safe = False,
+    install_requires = ['Django>=1.4'],
 )
