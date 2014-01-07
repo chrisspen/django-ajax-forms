@@ -2,9 +2,8 @@
 <div style="float:left;">
     {% if show_delete_link %}
         {#<a href="{% url opts|daf_admin_urlname:'delete',site original.pk|admin_urlquote %}" class="deletelink btn btn-danger">{% trans "Delete" %}</a>#}
-        <a href="{% daf_admin_urlname opts 'delete' site original.pk %}" class="deletelink btn btn-danger">{% trans "Delete" %}</a>
-    {% endif %}
-    <button type="reset" class="btn btn-default" title="Sets form fields to original values.">Reset</button>
+        <a href="{% daf_admin_urlname opts 'delete' site original.pk %}" class="deletelink btn btn-danger">{% trans "Delete" %}</a>&nbsp;{% endif %}<button
+    type="reset" class="btn btn-default" title="Sets form fields to original values.">Reset</button>
     {% for button in extra_buttons %}&nbsp;<a
         href="{% daf_render_button_url button original %}"
         class="btn {{ button.classes }}"{% if button.help_text %}

@@ -2042,6 +2042,7 @@ class BaseEditView(TemplateView, _CommonViewMixin):
         """
         Returns the form class to instantiate.
         """
+        print 'af.self.form:',self.form
         if not self.form:
             raise NotImplementedError, "A form class is not defined."
         return self.form
@@ -2062,6 +2063,7 @@ class BaseEditView(TemplateView, _CommonViewMixin):
     
     def get_form_instance(self):
         args, kwargs = self.get_form_params()
+        print 'af.get_form_instance:',args,kwargs
         form = self.get_form()(*args, **kwargs)
         return form
     
