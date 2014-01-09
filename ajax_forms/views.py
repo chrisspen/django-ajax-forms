@@ -9,6 +9,8 @@ from django.db.models import Q
 from django.core.exceptions import PermissionDenied
 from django.contrib.contenttypes.models import ContentType
 from django.template import Context, Template
+from django.views.decorators.cache import never_cache
+from django.views.decorators.csrf import csrf_protect
 from django.utils.html import escape, escapejs
 from django.template.loader import render_to_string
 from django.http import HttpResponse, HttpResponseRedirect
@@ -150,6 +152,10 @@ class TabularInline(InlineModelAdmin):
     template = 'ajax_forms/edit_inline/tabular.html'
 
 class SiteView(AdminSite):
+    """
+    Represents a generic Admin-based site that does not require
+    staff permissions to use.
+    """
     
     def __init__(self, *args, **kwargs):
         super(SiteView, self).__init__(*args, **kwargs)
@@ -160,7 +166,66 @@ class SiteView(AdminSite):
         app_name = app_name or model_or_iterable._meta.app_label
         module_name = module_name or model_or_iterable._meta.module_name
         self._path_registry[model_or_iterable] = (app_name, module_name)
-        
+
+    def has_permission(self, request):
+        """
+        Returns True if the given HttpRequest has permission to view
+        *at least one* page in the admin site.
+        """
+        return request.user.is_active
+    
+    def get_post_logout_path(self, request):
+        """
+        Returns the URL to redirect to when the user logs out.
+        """
+        index_path = reverse(
+            '%s:index' % (self.admin_site.name,),
+            current_app=self.name)
+        return index_path
+    
+    def admin_view(self, view, cacheable=False):
+        """
+        Decorator to create an admin view attached to this ``AdminSite``. This
+        wraps the view and provides permission checking by calling
+        ``self.has_permission``.
+
+        You'll want to use this from within ``AdminSite.get_urls()``:
+
+            class MyAdminSite(AdminSite):
+
+                def get_urls(self):
+                    from django.conf.urls import patterns, url
+
+                    urls = super(MyAdminSite, self).get_urls()
+                    urls += patterns('',
+                        url(r'^my_view/$', self.admin_view(some_view))
+                    )
+                    return urls
+
+        By default, admin_views are marked non-cacheable using the
+        ``never_cache`` decorator. If the view can be safely cached, set
+        cacheable=True.
+        """
+        print '#'*80
+        print 'admin_view'
+        def inner(request, *args, **kwargs):
+            print 'self.has_permission(request):',self.has_permission(request)
+            if not self.has_permission(request):
+                if request.path == reverse(
+                    '%s:logout' % (self.name,),
+                    current_app=self.name):
+                    index_path = self.get_post_logout_path()
+                    return HttpResponseRedirect(index_path)
+                return self.login(request)
+            return view(request, *args, **kwargs)
+        if not cacheable:
+            inner = never_cache(inner)
+        # We add csrf_protect here so this function can be used as a utility
+        # function for any view, without having to repeat 'csrf_protect'.
+        if not getattr(view, 'csrf_exempt', False):
+            inner = csrf_protect(inner)
+        return update_wrapper(inner, view)
+    
     def get_urls(self):
         from django.conf.urls import patterns, url, include
 
@@ -1012,6 +1077,41 @@ class ModelView(ModelAdmin):
             "admin/delete_confirmation.html"
         ], context, current_app=self.admin_site.name)
 
+#    def has_add_permission(self, request):
+#        """
+#        Returns True if the given request has permission to add an object.
+#        Can be overridden by the user in subclasses.
+#        """
+#        opts = self.opts
+#        return request.user.has_perm(opts.app_label + '.' + opts.get_add_permission())
+#
+#    def has_change_permission(self, request, obj=None):
+#        """
+#        Returns True if the given request has permission to change the given
+#        Django model instance, the default implementation doesn't examine the
+#        `obj` parameter.
+#
+#        Can be overridden by the user in subclasses. In such case it should
+#        return True if the given request has permission to change the `obj`
+#        model instance. If `obj` is None, this should return True if the given
+#        request has permission to change *any* object of the given type.
+#        """
+#        opts = self.opts
+#        return request.user.has_perm(opts.app_label + '.' + opts.get_change_permission())
+#
+#    def has_delete_permission(self, request, obj=None):
+#        """
+#        Returns True if the given request has permission to change the given
+#        Django model instance, the default implementation doesn't examine the
+#        `obj` parameter.
+#
+#        Can be overridden by the user in subclasses. In such case it should
+#        return True if the given request has permission to delete the `obj`
+#        model instance. If `obj` is None, this should return True if the given
+#        request has permission to delete *any* object of the given type.
+#        """
+#        opts = self.opts
+#        return request.user.has_perm(opts.app_label + '.' + opts.get_delete_permission())
 
 class ValidationError(Exception):
     pass
