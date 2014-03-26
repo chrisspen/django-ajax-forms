@@ -306,7 +306,7 @@ class ModelView(ModelAdmin):
     
     extra_buttons = []
     
-    def get_title(self, request):
+    def get_title(self, request, obj=None):
         return
     
 #    @property
@@ -424,7 +424,7 @@ class ModelView(ModelAdmin):
 
         context['add_button_name'] = self.add_button_name_template % dict(verbose_name=context['verbose_name'])
         
-        title = self.get_title(request)
+        title = self.get_title(request, obj=obj)
 #        print '~'*80
 #        print 'title:',title
         if title:
@@ -475,7 +475,7 @@ class ModelView(ModelAdmin):
             'site': self.admin_site,
             #'extra_buttons': [123],
         })
-        title = self.get_title(request)
+        title = self.get_title(request, obj=obj)
         if title:
             context['title'] = title
         if add and self.add_form_template is not None:
@@ -2071,7 +2071,7 @@ class BaseInlineView(object):
             else:
                 yield fn
     
-    def get_title(self):
+    def get_title(self, request, obj=None):
         if isinstance(self.model._meta.verbose_name_plural, basestring):
             return self.model._meta.verbose_name_plural
         return self.model.__name__ + 's'
@@ -2086,7 +2086,7 @@ class BaseInlineView(object):
         data['request'] = request
         data['object_list'] = self.get_queryset(obj)
         data['field_titles'] = self.get_field_titles()
-        data['inline_title'] = self.get_title()
+        data['inline_title'] = self.get_title(request, obj=obj)
         data['object_list'] = A(inline=self, objects=data['object_list'], request=request)
         data['can_add'] = self.can_add
         data['can_delete'] = self.can_delete

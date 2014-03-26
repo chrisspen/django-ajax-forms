@@ -82,16 +82,15 @@
         {{ cl.formset.non_form_errors }}
     {% endif %}
     <div class="module{% if cl.has_filters %} filtered{% endif %}" id="changelist">
+    
         {% block search %}
-            {#{% search_form cl %}#}
-            
             {% if cl.search_fields %}
-                <div id="toolbar">
+                <div id="toolbar" style="display:none;">
                     <form id="changelist-search" action="" method="get">
-                        <div><!-- DIV needed for valid HTML -->
-                            <label for="searchbar" style="display:inline;"><img src="{% static "admin/img/icon_searchbox.png" %}" alt="Search" /></label>&nbsp;<input
+                        <div style="float:left;"><!-- DIV needed for valid HTML -->
+                            <input
                             type="text" size="40" name="{{ search_var }}" placeholder="keywords" value="{{ cl.query }}" id="searchbar" style="display:inline; vertical-align:top;" />&nbsp;<input
-                            type="submit" class="btn" value="{% trans 'Search' %}"  style="display:inline;" />
+                            type="submit" class="btn" value="{% trans 'Search' %}" id="searchgo" style="display:inline;" />
                             {% if show_result_count %}&nbsp;<span
                                 class="small quiet">{% blocktrans count counter=cl.result_count %}{{ counter }} result{% plural %}{{ counter }} results{% endblocktrans %} (<a href="?{% if cl.is_popup %}pop=1{% endif %}">{% blocktrans with full_result_count=cl.full_result_count %}{{ full_result_count }} total{% endblocktrans %}</a>)</span>
                             {% endif %}
@@ -101,16 +100,45 @@
                         </div>
                     </form>
                 </div>
-                <script type="text/javascript">document.getElementById("searchbar").focus();</script>
             {% endif %}
-
         {% endblock %}
         
         {% block date_hierarchy %}{% date_hierarchy cl %}{% endblock %}
 
         <form id="changelist-form" action="" method="post"{% if cl.formset.is_multipart %} enctype="multipart/form-data"{% endif %}>{% csrf_token %}
-            <div class="row-fluid">
-                <div class="span12">
+            <div class="row-fluid top-toolbar">
+                {% if cl.search_fields %}
+                    <div class="row-span">
+                        <input
+                            type="text" size="40" name="{{ search_var }}" placeholder="keywords" value="{{ cl.query }}" id="searchbar-fake" style="display:inline; vertical-align:top;" />&nbsp;<input
+                            type="submit" class="btn" value="{% trans 'Search' %}" id="searchgo-fake" style="display:inline;" />
+                            {% if show_result_count %}&nbsp;<span
+                                class="small quiet">{% blocktrans count counter=cl.result_count %}{{ counter }} result{% plural %}{{ counter }} results{% endblocktrans %} (<a href="?{% if cl.is_popup %}pop=1{% endif %}">{% blocktrans with full_result_count=cl.full_result_count %}{{ full_result_count }} total{% endblocktrans %}</a>)</span>
+                            {% endif %}
+                    </div>
+                    <script type="text/javascript">
+                    (function($){
+                        $('#searchbar-fake').blur(function(){
+                            var el = $(this);
+                            $('#searchbar').val(el.val());
+                        });
+                        $('#searchbar-fake').keypress(function (e) {
+                            if(e.which == 13){
+                                $('#searchbar').val($('#searchbar-fake').val());
+                                $('#searchgo').click();
+                                //console.log('enter');
+                                return false;
+                            }
+                        });
+                        $('#searchgo-fake').click(function(){
+                            $('#searchgo').click();
+                            return false;
+                        });
+                    })(django.jQuery);
+                    </script>
+                    <script type="text/javascript">document.getElementById("searchbar-fake").focus();</script>
+                {% endif %}
+                <div class="row-span">
                     {% if action_form and actions_on_top and cl.full_result_count %}{% daf_admin_actions %}{% endif %}
                 </div>
             </div>

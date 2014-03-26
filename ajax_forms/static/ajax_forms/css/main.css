@@ -21,7 +21,7 @@ body.daf #result_list th a{
     
 }
 body.daf #result_list{
-    margin-top: 18px;
+    margin-top: 0px;
 }
 body.daf .actions label,
 body.daf .actions .action-counter{
@@ -134,7 +134,7 @@ body.daf .form-row .original{
     display:none;
 }
 body.daf .pagination{
-    margin-bottom: 0px;
+    /*margin-bottom: 0px;*/
 }
 body.daf .pagination .result-count{
     display: inline-block;
@@ -143,4 +143,30 @@ body.daf .pagination .result-count{
     padding-left: 10px;
     margin: 0;
     color: #999;
+}
+/* Dynamically expanding inline block. */
+body.daf .row-span{
+    float:left;
+    width:auto;
+}
+body.daf .row-fluid .group-logo{
+    position: absolute;
+    right: 0;
+    text-align: center;
+}
+body.daf .content-header h2{
+    padding-bottom:10px;
+}
+body.daf .pagination{
+    margin-top:0px;
+    margin-bottom:15px;
+}
+body.daf input{
+    margin-bottom:0;
+}
+body.daf #result_list{
+    margin-bottom:15px;
+}
+body.daf .top-toolbar{
+    margin-bottom:15px;
 }

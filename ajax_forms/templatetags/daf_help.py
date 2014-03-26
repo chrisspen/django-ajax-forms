@@ -34,6 +34,10 @@ def clean_title(s):
         return s
     return str(s).replace('_', ' ').strip().title()
 
+@register.filter
+def nbsp(s):
+    return str(s).strip().replace(' ', '&nbsp;')
+
 @register.simple_tag
 def sort_link(request, param_name, field_name, default='', label=''):
     """
@@ -118,6 +122,8 @@ def daf_admin_actions(context):
     so we know which value to use.
     """
     context['action_index'] = context.get('action_index', -1) + 1
+    #TODO:is there a better place to do this?
+    context['action_form'].fields['action'].choices[0] = ('', '--- Select Action ---')
     return context
 
 DOT = '.'
