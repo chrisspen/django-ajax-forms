@@ -40,6 +40,7 @@
             //$(options.acrossClears).show();
             $(options.acrossClears).css('display', options.acrossClearsDisplay);
             $(options.acrossQuestions).hide();
+            //$(options.acrossQuestions).css('display', options.acrossQuestionsDisplay);
             $(options.actionContainer).toggleClass(options.selectedClass);
             //$(options.allContainer).show();
             $(options.allContainer).css('display', options.allContainerDisplay);
@@ -74,6 +75,8 @@
         $(options.acrossQuestions).click(function(event) {
             event.preventDefault();
             $(options.acrossInput).val(1);
+            $(options.allToggle).attr("checked", true);
+            checker(1);
             showClear();
         });
         //$("div.actions span.clear a").click(function(event) {
@@ -83,6 +86,7 @@
             clearAcross();
             checker(0);
             updateCounter();
+            showQuestion();
         });
         lastChecked = null;
         $(actionCheckboxes).click(function(event) {

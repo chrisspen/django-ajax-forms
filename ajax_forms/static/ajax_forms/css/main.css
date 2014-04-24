@@ -144,7 +144,7 @@ body.daf .form-row .original{
 body.daf .pagination{
     /*margin-bottom: 0px;*/
 }
-body.daf .pagination .result-count,
+body.daf .pagination .total-result-count,
 body.daf .pagination .action-counter,
 body.daf .pagination .all,
 body.daf .pagination .question,
