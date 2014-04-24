@@ -75,15 +75,23 @@ body.daf table thead th.sorted .sortoptions a{
     width: 14px;
     height: 12px;
 }
+body.daf table thead th.sorted{
+    white-space: nowrap;
+    position: relative;
+}
 body.daf table thead th.sorted .sortoptions{
-    float:right;
+    /*float:right;*/
+    position: absolute;
+    right: 0;
 }
 body.daf table thead th.sorted .sortoptions a.sortremove{
     background: url(../img/sorting-icons.gif) -4px -5px no-repeat;
-    display:none;
+    display:inline-block;
+    visibility: invisible;
 }
 body.daf table thead th:hover .sortoptions a.sortremove{
     display:inline-block;
+    visibility: visible;
 }
 body.daf table thead th.sorted .sortoptions a.descending {
     background: url(../img/sorting-icons.gif) -5px -94px no-repeat;
@@ -136,13 +144,30 @@ body.daf .form-row .original{
 body.daf .pagination{
     /*margin-bottom: 0px;*/
 }
-body.daf .pagination .result-count{
+body.daf .pagination .result-count,
+body.daf .pagination .action-counter,
+body.daf .pagination .all,
+body.daf .pagination .question,
+body.daf .pagination .clear{
     display: inline-block;
     vertical-align: top;
     padding-top: 10px;
     padding-left: 10px;
     margin: 0;
     color: #999;
+    font-size: 13px;
+    line-height: 18px;
+    float: none;
+    border: none;
+}
+body.daf .pagination .question,
+body.daf .pagination .clear{
+    color: #5b80b2;
+}
+body.daf .pagination .question:hover,
+body.daf .pagination .clear:hover{
+    background-color: transparent;
+    color: #036;
 }
 /* Dynamically expanding inline block. */
 body.daf .row-span{

@@ -27,7 +27,17 @@
 <script type="text/javascript">
 (function($) {
     $(document).ready(function($) {
-        $("tr input.action-select").actions();
+        //$("tr input.action-select").actions();
+        $("tr input.action-select").daf_actions({
+            actionContainer: "div.pagination",
+	        //counterContainer: "span.action-counter",
+	        allContainer: "div.pagination span.all",
+	        acrossInput: ".actions input.select-across",
+	        acrossQuestions: "div.pagination .question",
+	        acrossClears: "div.pagination .clear",
+	        //allToggle: "#action-toggle",
+	        //selectedClass: "selected"
+	    });
     });
 })(django.jQuery);
 </script>

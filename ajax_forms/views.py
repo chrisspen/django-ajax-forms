@@ -17,6 +17,7 @@ from django.http import HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from django.utils.safestring import mark_safe
 from django.forms.formsets import all_valid
+from django.contrib.admin.templatetags.admin_static import static
 from django.contrib.admin.util import unquote, flatten_fieldsets, get_deleted_objects, model_format_dict
 from django.core.urlresolvers import reverse
 from django.forms.models import (modelform_factory, modelformset_factory,
@@ -305,6 +306,23 @@ class ModelView(ModelAdmin):
     module_name = None
     
     extra_buttons = []
+    
+    @property
+    def media(self):
+        extra = '' if settings.DEBUG else '.min'
+        js = [
+            'admin/js/core.js',
+            'admin/js/admin/RelatedObjectLookups.js',
+            'admin/js/jquery%s.js' % extra,
+            'admin/js/jquery.init.js'
+        ]
+        if self.actions is not None:
+            js.append('ajax_forms/js/daf-actions%s.js' % extra)
+        if self.prepopulated_fields:
+            js.extend(['admin/js/urlify.js', 'admin/js/prepopulate%s.js' % extra])
+        if self.opts.get_ordered_objects():
+            js.extend(['admin/js/getElementsBySelector.js', 'admin/js/dom-drag.js' , 'admin/js/admin/ordering.js'])
+        return forms.Media(js=[static(url) for url in js])
     
     def get_title(self, request, obj=None):
         return
