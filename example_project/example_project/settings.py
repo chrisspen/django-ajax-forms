@@ -1,6 +1,14 @@
 # Django settings for ajax_forms project.
 
+import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+
 DEBUG = True
+
 TEMPLATE_DEBUG = DEBUG
 
 ADMINS = (
@@ -30,11 +38,15 @@ TIME_ZONE = 'America/Chicago'
 # http://www.i18nguy.com/unicode/language-identifiers.html
 LANGUAGE_CODE = 'en-us'
 
+LANGUAGES = (
+    ('en-us', 'English'),
+)
+
 SITE_ID = 1
 
 # If you set this to False, Django will make some optimizations so as not
 # to load the internationalization machinery.
-USE_I18N = True
+USE_I18N = False
 
 # If you set this to False, Django will not format dates, numbers and
 # calendars according to the current locale.
@@ -97,17 +109,21 @@ MIDDLEWARE_CLASSES = (
     # 'django.middleware.clickjacking.XFrameOptionsMiddleware',
 )
 
-ROOT_URLCONF = 'example_project.urls'
+#ROOT_URLCONF = 'example_project.urls'
+ROOT_URLCONF = 'example_project.example_project.urls'
 
 # Python dotted path to the WSGI application used by Django's runserver.
 WSGI_APPLICATION = 'example_project.wsgi.application'
 
+print('PROJECT_DIR:', PROJECT_DIR)
 TEMPLATE_DIRS = (
     # Put strings here, like "/home/html/django_templates" or "C:/www/django/templates".
     # Always use forward slashes, even on Windows.
     # Don't forget to use absolute paths, not relative paths.
     'templates',
+    os.path.join(PROJECT_DIR, 'ajax_forms/tests/templates'),
 )
+print(TEMPLATE_DIRS)
 INSTALLED_APPS = (
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -152,3 +168,33 @@ LOGGING = {
         },
     }
 }
+
+# Required in Django>=1.10.
+TEMPLATES = [
+    {
+        'BACKEND': 'django.template.backends.django.DjangoTemplates',
+        #'DIRS': [
+            #'%s/../templates' % PROJECT_DIR,
+            #'%s/../static' % PROJECT_DIR,
+        #],
+        'DIRS': TEMPLATE_DIRS,
+#         'APP_DIRS': True,
+        'OPTIONS': {
+            'context_processors': [
+                'django.contrib.auth.context_processors.auth',
+                'django.template.context_processors.debug',
+                'django.template.context_processors.request',
+                'django.template.context_processors.i18n',
+                'django.template.context_processors.media',
+                'django.template.context_processors.static',
+                'django.template.context_processors.tz',
+                'django.contrib.messages.context_processors.messages',
+            ],
+            'loaders': [
+                'django.template.loaders.filesystem.Loader',
+                'django.template.loaders.app_directories.Loader',
+            ],
+            'debug': DEBUG,
+        },
+    },
+]

@@ -1,3 +1,6 @@
+from __future__ import print_function
+
+import warnings
 import json
 import re
 import uuid
@@ -5,6 +8,10 @@ from datetime import date
 from collections import namedtuple
 from functools import update_wrapper
 
+from django.contrib import admin
+from django.views.generic.edit import FormView
+from django.db import models
+from django.contrib.admin.options import ModelAdmin
 from django.views.generic import ListView, TemplateView
 from django.db.models import Q
 from django.core.exceptions import PermissionDenied
@@ -15,38 +22,39 @@ from django.views.decorators.csrf import csrf_protect
 from django.utils.html import escape, escapejs
 from django.template.loader import render_to_string
 from django.http import HttpResponse, HttpResponseRedirect
-from django.shortcuts import get_object_or_404
 from django.utils.safestring import mark_safe
 from django.forms.formsets import all_valid
 from django.contrib.admin.templatetags.admin_static import static
-from django.contrib.admin.util import unquote, flatten_fieldsets, get_deleted_objects, model_format_dict
+try:
+    from django.contrib.admin.util import unquote, get_deleted_objects, quote
+except ImportError:
+    from django.contrib.admin.utils import unquote, get_deleted_objects, quote
 from django.core.urlresolvers import reverse
-from django.forms.models import (modelform_factory, modelformset_factory,
-    inlineformset_factory, BaseInlineFormSet)
+from django.forms.models import modelformset_factory
 from django.http import Http404
 from django import forms
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.contenttypes import views as contenttype_views
 from django.utils import six
 from django.conf import settings
-from django.contrib.admin import widgets, helpers
+from django.contrib.admin import helpers
 from django.db import models, transaction, router
 from django.http import HttpResponse, Http404
 from django.template.response import SimpleTemplateResponse, TemplateResponse
-from django.views.decorators.http import require_POST
+#from django.views.decorators.http import require_POST
 from django.forms.models import modelformset_factory
 from django.forms.formsets import BaseFormSet
-from django.forms.forms import BaseForm
+#from django.forms.forms import BaseForm
 from django.forms.models import ModelForm
-from django.views.generic.edit import BaseFormView
+#from django.views.generic.edit import BaseFormView
 from django.views.generic.edit import BaseCreateView
 from django.views.generic import FormView
-from django.views.generic.edit import FormMixin
-from django.views.generic import View
-from django.views.generic.edit import ModelFormMixin
+#from django.views.generic.edit import FormMixin
+#from django.views.generic import View
+#from django.views.generic.edit import ModelFormMixin
 from django.views.generic.edit import TemplateResponseMixin
-from django.views.generic.edit import ProcessFormView
-from django.views.generic.edit import SingleObjectMixin
+#from django.views.generic.edit import ProcessFormView
+#from django.views.generic.edit import SingleObjectMixin
 from django.utils.translation import ugettext as _
 from django.utils.translation import ungettext
 from django.utils.safestring import mark_safe
@@ -55,25 +63,47 @@ from django.template.loader import render_to_string, get_template
 from django.db import models
 from django.utils.encoding import force_text
 from django.contrib.admin.options import csrf_protect_m, IncorrectLookupParameters
-from django.contrib.admin.views.main import (ALL_VAR, EMPTY_CHANGELIST_VALUE,
-    ORDER_VAR, PAGE_VAR, SEARCH_VAR)
+from django.contrib.admin.views.main import SEARCH_VAR
+from django.contrib.admin.sites import AdminSite
+from django.contrib.admin.options import ModelAdmin
+from django.contrib.admin.options import InlineModelAdmin as _InlineModelAdmin
+from django.contrib.admin.views.main import ChangeList
+from django.core.urlresolvers import reverse
 
-from ajax_forms.utils import LazyEncoder
+try:
+    # Removed in Django 1.6
+    from django.conf.urls.defaults import url, include
+except ImportError:
+    from django.conf.urls import url, include
+
+try:
+    # Relocated in Django 1.6
+    from django.conf.urls.defaults import patterns
+except ImportError:
+    # Completely removed in Django 1.10
+    try:
+        from django.conf.urls import patterns
+    except ImportError:
+        patterns = None
+
+#from ajax_forms.utils import LazyEncoder
 from ajax_forms import constants as C
 from ajax_forms.templatetags.daf_help import sort_link, clean_title
 
+SLUG_TO_FORM_REGISTRY = {}
+
 FORM_SUBMITTED = "valid_submit"
 
-from django.contrib.admin.sites import AdminSite
-from django.contrib.admin.options import ModelAdmin
-
-from django.contrib.admin.views.main import ChangeList
+try:
+    # >= Django 1.8
+    commit_on_success = transaction.atomic
+except AttributeError:
+    # < Django 1.8
+    commit_on_success = transaction.commit_on_success
 
 # We need to monkeypatch Changelist.url_for_result because it hardcodes
 # the sitename...
 def _url_for_result(self, result):
-    from django.core.urlresolvers import reverse
-    from django.contrib.admin.util import quote
     pk = getattr(result, self.pk_attname)
     return reverse('%s:%s_%s_change' % (self.model_admin.admin_site.name,
                                         self.opts.app_label,
@@ -82,12 +112,8 @@ def _url_for_result(self, result):
                    current_app=self.model_admin.admin_site.name)
 ChangeList.url_for_result = _url_for_result
 
-from django.contrib.admin.options import InlineModelAdmin as _InlineModelAdmin
-
-#Button = namedtuple('Button', ['name', 'url', 'short_description'])
-
 class Button(object):
-    
+
     def __init__(self, **kwargs):
         self.__dict__.update(dict(
             url=None,
@@ -98,58 +124,51 @@ class Button(object):
             model_view=None,
         ))
         self.__dict__.update(kwargs)
-        
+
     def get_url(self, obj=None, get_reverse_args=None):
-        url = None
+        url_str = None
         try:
             opts = self.model_view.model._meta
             if self.url:
-                url = self.url
+                url_str = self.url
             elif isinstance(self.view, basestring):
-                #reverse('%s:%s_%s_change' %
                 view_name = self.view.format(
                     site_name=self.model_view.admin_site.name,
                     app_label=opts.app_label,
                     module_name=opts.module_name)
-                #print 'view_name:',view_name
                 args = []
                 if callable(get_reverse_args):
                     args = get_reverse_args(self.model_view, obj)
                 elif obj:
                     args.append(obj.id)
-                url = reverse(view_name, args=args)
+                url_str = reverse(view_name, args=args)
             else:
                 raise NotImplementedError
-        except Exception, e:
-            print 'error:',e
-        return url
+        except Exception as e:
+            print('error:', e)
+        return url_str
 
 class InlineModelAdmin(_InlineModelAdmin):
 
     can_add_ajax = False
-    
+
     can_change_ajax = False
-    
+
     def get_formset(self, request, obj=None, **kwargs):
-#        kwargs['has_ajax'] = True
         formset = super(InlineModelAdmin, self).get_formset(request, obj=obj, **kwargs)
-        #TODO:plug in ajax?
-#        print '*'*80
-#        print 'formset:',formset
-#        print 'has_ajax:',formset.has_ajax
         return formset
-    
+
     def get_ajax_channel(self):
         return self.model.__name__.lower()
-    
+
     def add_view_ajax(self, request, parent_object_id):
         raise NotImplementedError
-    
+
     def change_view_ajax(self, request, parent_object_id, object_id):
         raise NotImplementedError
 
 class TabularInline(InlineModelAdmin):
-    
+
     template = 'ajax_forms/edit_inline/tabular.html'
 
 class SiteView(AdminSite):
@@ -157,11 +176,11 @@ class SiteView(AdminSite):
     Represents a generic Admin-based site that does not require
     staff permissions to use.
     """
-    
+
     def __init__(self, *args, **kwargs):
         super(SiteView, self).__init__(*args, **kwargs)
         self._path_registry = {} # {model,(app_name, module_name)}
-    
+
     def register(self, model_or_iterable, admin_class=None, app_name=None, module_name=None, **options):
         super(SiteView, self).register(model_or_iterable=model_or_iterable, admin_class=admin_class, **options)
         app_name = app_name or model_or_iterable._meta.app_label
@@ -174,16 +193,14 @@ class SiteView(AdminSite):
         *at least one* page in the admin site.
         """
         return request.user.is_active
-    
+
     def get_post_logout_path(self, request):
         """
         Returns the URL to redirect to when the user logs out.
         """
-        index_path = reverse(
-            '%s:index' % (self.admin_site.name,),
-            current_app=self.name)
+        index_path = reverse('%s:index' % (self.admin_site.name,), current_app=self.name)
         return index_path
-    
+
     def admin_view(self, view, cacheable=False):
         """
         Decorator to create an admin view attached to this ``AdminSite``. This
@@ -207,18 +224,15 @@ class SiteView(AdminSite):
         ``never_cache`` decorator. If the view can be safely cached, set
         cacheable=True.
         """
-        print '#'*80
-        print 'admin_view'
+
         def inner(request, *args, **kwargs):
-            print 'self.has_permission(request):',self.has_permission(request)
             if not self.has_permission(request):
-                if request.path == reverse(
-                    '%s:logout' % (self.name,),
-                    current_app=self.name):
+                if request.path == reverse('%s:logout' % (self.name,), current_app=self.name):
                     index_path = self.get_post_logout_path()
                     return HttpResponseRedirect(index_path)
                 return self.login(request)
             return view(request, *args, **kwargs)
+
         if not cacheable:
             inner = never_cache(inner)
         # We add csrf_protect here so this function can be used as a utility
@@ -226,9 +240,8 @@ class SiteView(AdminSite):
         if not getattr(view, 'csrf_exempt', False):
             inner = csrf_protect(inner)
         return update_wrapper(inner, view)
-    
+
     def get_urls(self):
-        from django.conf.urls import patterns, url, include
 
         if settings.DEBUG:
             self.check_dependencies()
@@ -265,12 +278,8 @@ class SiteView(AdminSite):
 
         # Add in each model's views.
         for model, model_admin in six.iteritems(self._registry):
-#            print '^'*80
             app_label, module_name = self._path_registry[model]
             url_str = r'^%s/%s/' % (app_label, module_name)
-#            print 'app/module:',app_label, module_name
-#            print 'url_str:',url_str
-#            print 'urls:',model_admin.urls
             urlpatterns += patterns('',
                 url(url_str,
                     include(model_admin.urls))
@@ -278,35 +287,35 @@ class SiteView(AdminSite):
         return urlpatterns
 
 class ModelView(ModelAdmin):
-    
+
     change_list_template = 'ajax_forms/change_list.html'
-    
+
     delete_confirmation_template = 'ajax_forms/delete_confirmation.html'
-    
+
     delete_selected_confirmation_template = 'ajax_forms/delete_selected_confirmation.html'
-    
+
     show_add_button = True
-    
+
     add_form_template = 'ajax_forms/change_form.html'
-    
+
     change_form_template = 'ajax_forms/change_form.html'
-    
+
     object_id_kwargs_field = 'object_id'
-    
+
     save_on_top = True
-    
+
     verbose_name = None
-    
+
     verbose_name_plural = None
-    
+
     add_button_name_template = 'Add %(verbose_name)s'
-    
+
     app_label = None
-    
+
     module_name = None
-    
+
     extra_buttons = []
-    
+
     @property
     def media(self):
         extra = '' if settings.DEBUG else '.min'
@@ -321,25 +330,13 @@ class ModelView(ModelAdmin):
         if self.prepopulated_fields:
             js.extend(['admin/js/urlify.js', 'admin/js/prepopulate%s.js' % extra])
         if self.opts.get_ordered_objects():
-            js.extend(['admin/js/getElementsBySelector.js', 'admin/js/dom-drag.js' , 'admin/js/admin/ordering.js'])
-        return forms.Media(js=[static(url) for url in js])
-    
+            js.extend(['admin/js/getElementsBySelector.js', 'admin/js/dom-drag.js', 'admin/js/admin/ordering.js'])
+        return forms.Media(js=[static(_url) for _url in js])
+
     def get_title(self, request, obj=None):
         return
-    
-#    @property
-#    def object_id(self):
-#        return self.kwargs.get(self.object_id_kwargs_field)
-#    
-#    def get_object(self):
-#        if self.object_id:
-#            try:
-#                return self.model.objects.get(id=self.object_id)
-#            except self.model.DoesNotExist:
-#                raise Http404
-            
+
     def get_urls(self):
-        from django.conf.urls import patterns, url
 
         def wrap(view):
             def wrapper(*args, **kwargs):
@@ -356,28 +353,15 @@ class ModelView(ModelAdmin):
             self.app_label or self.model._meta.app_label,
             self.module_name or self.model._meta.module_name,
         )
-#        print 'info:',info
 
         urlpatterns = patterns('',
-            url(r'^$',
-                wrap(self.changelist_view),
-                name='%s_%s_changelist' % info),
-            url(r'^add/$',
-                wrap(self.add_view),
-                name='%s_%s_add' % info),
-            url(r'^(.+)/history/$',
-                wrap(self.history_view),
-                name='%s_%s_history' % info),
-            url(r'^(.+)/delete/$',
-                wrap(self.delete_view),
-                name='%s_%s_delete' % info),
-            url(r'^([0-9]+)/$',
-                wrap(self.change_view),
-                name='%s_%s_change' % info),
+            url(r'^$', wrap(self.changelist_view), name='%s_%s_changelist' % info),
+            url(r'^add/$', wrap(self.add_view), name='%s_%s_add' % info),
+            url(r'^(.+)/history/$', wrap(self.history_view), name='%s_%s_history' % info),
+            url(r'^(.+)/delete/$', wrap(self.delete_view), name='%s_%s_delete' % info),
+            url(r'^([0-9]+)/$', wrap(self.change_view), name='%s_%s_change' % info),
         )
-        #print '&'*80
         inlines = self.get_inline_instances(request=None)
-        #print 'inlines:',inlines
         for inline in inlines:
             channel_name = inline.get_ajax_channel()
             info = (
@@ -385,10 +369,8 @@ class ModelView(ModelAdmin):
                 self.module_name or self.model._meta.module_name,
                 channel_name,
             )
-#            print 'inline.can_add_ajax:',inline.can_add_ajax,inline
             if inline.can_add_ajax:
                 name = '%s_%s_%s_add_ajax' % info
-#                print 'name:',name
                 urlpatterns += patterns('',
                     url(r'^([0-9]+)/%s/add/ajax/$' % (channel_name,),
                         wrap_inline(inline.add_view_ajax),
@@ -401,36 +383,25 @@ class ModelView(ModelAdmin):
                         wrap_inline(inline.change_view_ajax),
                         name=name)
                 )
-        
+
         return urlpatterns
-    
+
     def get_extra_buttons(self, request, obj=None):
         lst = list()
-        #object = self.get_object()
         for _btn in self.extra_buttons:
-#            if not _btn.url:
-#                continue
-#            btn = Button(
-#                name=_btn.name,
-#                url=_btn.url(object) if callable(_btn.url) else _btn.url,
-#                short_description=_btn.short_description)
             btn = Button(**_btn.__dict__)
             btn.model_view = self
             lst.append(btn)
-#        print '#'*80
-#        print 'get_extra_buttons:',lst
         return lst
-    
+
     def get_extra_context(self, request, obj=None):
-#        print '@'*80
-#        print 'get_extra_context:',obj
         context = {}
-        
+
         opts = self.model._meta
-        
+
         context['search_var'] = SEARCH_VAR
         context['extra_buttons'] = self.get_extra_buttons(request, obj)
-        
+
         list_display = self.get_list_display(request)
         list_display_links = self.get_list_display_links(request, list_display)
         list_filter = self.get_list_filter(request)
@@ -441,10 +412,8 @@ class ModelView(ModelAdmin):
         context['verbose_name_plural'] = self.verbose_name_plural or opts.verbose_name_plural
 
         context['add_button_name'] = self.add_button_name_template % dict(verbose_name=context['verbose_name'])
-        
+
         title = self.get_title(request, obj=obj)
-#        print '~'*80
-#        print 'title:',title
         if title:
             context['title'] = title
 
@@ -453,24 +422,18 @@ class ModelView(ModelAdmin):
         if actions:
             # Add the action checkboxes if there are any actions available.
             list_display = ['action_checkbox'] +  list(list_display)
-        
-        ChangeList = self.get_changelist(request)
+
+        _ChangeList = self.get_changelist(request)
         try:
-            cl = ChangeList(request, self.model, list_display,
+            cl = _ChangeList(request, self.model, list_display,
                 list_display_links, list_filter, self.date_hierarchy,
                 self.search_fields, self.list_select_related,
                 self.list_per_page, self.list_max_show_all, self.list_editable,
                 self)
             context['pagination_required'] = (not cl.show_all or not cl.can_show_all) and cl.multi_page
-        except IncorrectLookupParameters, e:
+        except IncorrectLookupParameters as e:
             pass
         return context
-    
-    #@csrf_protect_m
-#    def changelist_view(self, request, extra_context=None):
-#        extra_context = extra_context or {}
-#        extra_context.update(self.get_extra_context(request))
-#        return super(ModelView, self).changelist_view(request, extra_context=extra_context)
 
     def render_change_form(self, request, context, add=False, change=False, form_url='', obj=None):
         opts = self.model._meta
@@ -491,7 +454,6 @@ class ModelView(ModelAdmin):
             'save_as': self.save_as,
             'save_on_top': self.save_on_top,
             'site': self.admin_site,
-            #'extra_buttons': [123],
         })
         title = self.get_title(request, obj=obj)
         if title:
@@ -595,12 +557,11 @@ class ModelView(ModelAdmin):
         """
         opts = self.model._meta
         if self.has_change_permission(request, None):
-            post_url = reverse('%s:%s_%s_changelist' %
-                               (self.admin_site.name, opts.app_label, opts.module_name),
-                               current_app=self.admin_site.name)
+            post_url = reverse(
+                '%s:%s_%s_changelist' % (self.admin_site.name, opts.app_label, opts.module_name),
+                current_app=self.admin_site.name)
         else:
-            post_url = reverse('%s:index' % self.admin_site.name,
-                               current_app=self.admin_site.name)
+            post_url = reverse('%s:index' % self.admin_site.name, current_app=self.admin_site.name)
         return HttpResponseRedirect(post_url)
 
     def response_post_save_change(self, request, obj):
@@ -610,9 +571,9 @@ class ModelView(ModelAdmin):
         """
         opts = self.model._meta
         if self.has_change_permission(request, None):
-            post_url = reverse('%s:%s_%s_changelist' %
-                               (self.admin_site.name, opts.app_label, opts.module_name),
-                               current_app=self.admin_site.name)
+            post_url = reverse(
+                '%s:%s_%s_changelist' % (self.admin_site.name, opts.app_label, opts.module_name),
+                current_app=self.admin_site.name)
         else:
             post_url = reverse('%s:index' % (self.admin_site.name,),
                                current_app=self.admin_site.name)
@@ -686,6 +647,8 @@ class ModelView(ModelAdmin):
             return None
 
     def get_add_view_initial(self, request):
+        model = self.model
+        opts = model._meta
         initial = dict(request.GET.items())
         for k in initial:
             try:
@@ -697,7 +660,7 @@ class ModelView(ModelAdmin):
         return initial
 
     @csrf_protect_m
-    @transaction.commit_on_success
+    @commit_on_success
     def add_view(self, request, form_url='', extra_context=None):
         "The 'add' admin view for this model."
         model = self.model
@@ -706,11 +669,11 @@ class ModelView(ModelAdmin):
         if not self.has_add_permission(request):
             raise PermissionDenied
 
-        ModelForm = self.get_form(request)
+        _ModelForm = self.get_form(request)
         formsets = []
         inline_instances = self.get_inline_instances(request, None)
         if request.method == 'POST':
-            form = ModelForm(request.POST, request.FILES)
+            form = _ModelForm(request.POST, request.FILES)
             if form.is_valid():
                 new_object = self.save_form(request, form, change=False)
                 form_validated = True
@@ -737,7 +700,7 @@ class ModelView(ModelAdmin):
             # Prepare the dict of initial data from the request.
             # We have to special-case M2Ms as a list of comma-separated PKs.
             initial = self.get_add_view_initial(request)
-            form = ModelForm(initial=initial)
+            form = _ModelForm(initial=initial)
             prefixes = {}
             for FormSet, inline in zip(self.get_formsets(request), inline_instances):
                 prefix = FormSet.get_default_prefix()
@@ -777,7 +740,7 @@ class ModelView(ModelAdmin):
         return self.render_change_form(request, context, form_url=form_url, add=True)
 
     @csrf_protect_m
-    @transaction.commit_on_success
+    @commit_on_success
     def change_view(self, request, object_id, form_url='', extra_context=None):
         "The 'change' admin view for this model."
         model = self.model
@@ -796,11 +759,11 @@ class ModelView(ModelAdmin):
                                     (self.admin_site.name, opts.app_label, opts.module_name),
                                     current_app=self.admin_site.name))
 
-        ModelForm = self.get_form(request, obj)
+        _ModelForm = self.get_form(request, obj)
         formsets = []
         inline_instances = self.get_inline_instances(request, obj)
         if request.method == 'POST':
-            form = ModelForm(request.POST, request.FILES, instance=obj)
+            form = _ModelForm(request.POST, request.FILES, instance=obj)
             if form.is_valid():
                 form_validated = True
                 new_object = self.save_form(request, form, change=True)
@@ -827,7 +790,7 @@ class ModelView(ModelAdmin):
                 return self.response_change(request, new_object)
 
         else:
-            form = ModelForm(instance=obj)
+            form = _ModelForm(instance=obj)
             prefixes = {}
             for FormSet, inline in zip(self.get_formsets(request, obj), inline_instances):
                 prefix = FormSet.get_default_prefix()
@@ -865,12 +828,12 @@ class ModelView(ModelAdmin):
             'errors': helpers.AdminErrorList(form, formsets),
             'app_label': opts.app_label,
         }
-        
+
         extra_context = extra_context or {}
         extra_context.update(self.get_extra_context(request, obj))
         context.update(extra_context)
         #print 'eb:',context['extra_buttons']
-        
+
         return self.render_change_form(
             request, context, change=True, obj=obj, form_url=form_url)
 
@@ -898,9 +861,9 @@ class ModelView(ModelAdmin):
             # Add the action checkboxes if there are any actions available.
             list_display = ['action_checkbox'] +  list(list_display)
 
-        ChangeList = self.get_changelist(request)
+        _ChangeList = self.get_changelist(request)
         try:
-            cl = ChangeList(request, self.model, list_display,
+            cl = _ChangeList(request, self.model, list_display,
                 list_display_links, list_filter, self.date_hierarchy,
                 self.search_fields, self.list_select_related,
                 self.list_per_page, self.list_max_show_all, self.list_editable,
@@ -1006,7 +969,6 @@ class ModelView(ModelAdmin):
 
         selection_note_all = ungettext('%(total_count)s selected',
             'All %(total_count)s selected', cl.result_count)
-        #self.admin_site.name
         context = {
             'module_name': force_text(opts.verbose_name_plural),
             'selection_note': _('0 of %(cnt)s selected') % {'cnt': len(cl.result_list)},
@@ -1032,7 +994,7 @@ class ModelView(ModelAdmin):
         ], context, current_app=self.admin_site.name)
 
     @csrf_protect_m
-    @transaction.commit_on_success
+    @commit_on_success
     def delete_view(self, request, object_id, extra_context=None):
         "The 'delete' admin view for this model."
         opts = self.model._meta
@@ -1060,7 +1022,10 @@ class ModelView(ModelAdmin):
             self.log_deletion(request, obj, obj_display)
             self.delete_model(request, obj)
 
-            self.message_user(request, _('The %(name)s "%(obj)s" was deleted successfully.') % {'name': force_text(opts.verbose_name), 'obj': force_text(obj_display)})
+            self.message_user(
+                request,
+                _('The %(name)s "%(obj)s" was deleted successfully.') \
+                    % {'name': force_text(opts.verbose_name), 'obj': force_text(obj_display)})
 
             if not self.has_change_permission(request, None):
                 return HttpResponseRedirect(reverse('%s:index' % self.admin_site.name,
@@ -1095,68 +1060,33 @@ class ModelView(ModelAdmin):
             "admin/delete_confirmation.html"
         ], context, current_app=self.admin_site.name)
 
-#    def has_add_permission(self, request):
-#        """
-#        Returns True if the given request has permission to add an object.
-#        Can be overridden by the user in subclasses.
-#        """
-#        opts = self.opts
-#        return request.user.has_perm(opts.app_label + '.' + opts.get_add_permission())
-#
-#    def has_change_permission(self, request, obj=None):
-#        """
-#        Returns True if the given request has permission to change the given
-#        Django model instance, the default implementation doesn't examine the
-#        `obj` parameter.
-#
-#        Can be overridden by the user in subclasses. In such case it should
-#        return True if the given request has permission to change the `obj`
-#        model instance. If `obj` is None, this should return True if the given
-#        request has permission to change *any* object of the given type.
-#        """
-#        opts = self.opts
-#        return request.user.has_perm(opts.app_label + '.' + opts.get_change_permission())
-#
-#    def has_delete_permission(self, request, obj=None):
-#        """
-#        Returns True if the given request has permission to change the given
-#        Django model instance, the default implementation doesn't examine the
-#        `obj` parameter.
-#
-#        Can be overridden by the user in subclasses. In such case it should
-#        return True if the given request has permission to delete the `obj`
-#        model instance. If `obj` is None, this should return True if the given
-#        request has permission to delete *any* object of the given type.
-#        """
-#        opts = self.opts
-#        return request.user.has_perm(opts.app_label + '.' + opts.get_delete_permission())
 
 class ValidationError(Exception):
     pass
 
 class BaseAjaxFormSet(BaseFormSet):
-    
+
     def __unicode__(self):
-        forms = u' '.join([unicode(form) for form in self])
-        return mark_safe(u'\n'.join([unicode(self.management_form), forms]))
-    
+        _forms = u' '.join([unicode(form) for form in self])
+        return mark_safe(u'\n'.join([unicode(self.management_form), _forms]))
+
 @csrf_exempt
 def handle_ajax_crud(request, model_name, action, **kwargs):
     """
     Redirects the standard record manipulation URLs to the appropriate form
     method.
     """
-    
+
     form_cls = SLUG_TO_FORM_REGISTRY.get(model_name)
     if not form_cls:
         if settings.DEBUG:
-            raise Exception, 'No form registered to slug: %s' % (model_name,)
+            raise Exception('No form registered to slug: %s' % (model_name,))
         raise Http404
     if action not in C.CRUD_ACTIONS:
         if settings.DEBUG:
-            raise Exception, 'Invalid action: %s' % (action,)
+            raise Exception('Invalid action: %s' % (action,))
         raise Http404
-    
+
     class O(object):
         pass
     form = O()
@@ -1171,8 +1101,8 @@ def handle_ajax_crud(request, model_name, action, **kwargs):
             if settings.DEBUG:
                 raise
             raise Http404
-    
-    # Enforce any model/form specific permissions rules. 
+
+    # Enforce any model/form specific permissions rules.
     check_perm_method = getattr(form, 'has_%s_permission' % action)
     perm_args = {}
     action_args = {}
@@ -1195,10 +1125,10 @@ def handle_ajax_crud(request, model_name, action, **kwargs):
         action_args = perm_args
     if not check_perm_method(request, **perm_args):
         if settings.DEBUG:
-            raise Exception, 'Permission denied.'
+            raise Exception('Permission denied.')
         raise Http404
-    
-    action_args = dict((str(k),v) for k,v in action_args.iteritems())
+
+    action_args = dict((str(k), v) for k, v in action_args.iteritems())
     response = getattr(form, action)(request, **action_args)
     if action == C.VIEW:
         return HttpResponse(
@@ -1213,24 +1143,24 @@ def handle_ajax_etter(request, model_name, action, attr_slug, pk):
     """
     Returns single object attributes as JSON.
     """
-    
+
     form_cls = SLUG_TO_FORM_REGISTRY.get(model_name)
     if not form_cls:
         if settings.DEBUG:
-            raise Exception, 'No form registered to slug: %s' % (model_name,)
+            raise Exception('No form registered to slug: %s' % (model_name,))
         raise Http404
     if action not in (C.SET, C.GET):
         if settings.DEBUG:
-            raise Exception, 'Invalid action: %s' % (action,)
+            raise Exception('Invalid action: %s' % (action,))
         raise Http404
-    
+
     # Instantiate form while bypassing __init__().
     class O(object):
         pass
     form = O()
     form.__class__ = form_cls
     form.init()
-    
+
     value = None
     try:
         obj = form.get_object(pk)
@@ -1239,13 +1169,13 @@ def handle_ajax_etter(request, model_name, action, attr_slug, pk):
         if settings.DEBUG:
             raise
         raise Http404
-    
+
     attr_name = form.slug_to_attr(attr_slug)
-    
+
     permission_method = getattr(form, 'has_%s_permission' % action)
     if not permission_method(request=request, obj=obj, attr=attr_name):
         if settings.DEBUG:
-            raise Exception, 'Permission denied.'
+            raise Exception('Permission denied.')
         raise Http404
     action_method_name = '%s_%s' % (action, attr_name)
     success = True
@@ -1263,16 +1193,13 @@ def handle_ajax_etter(request, model_name, action, attr_slug, pk):
                 if isinstance(field, models.ForeignKey):
                     value = field.rel.to.objects.get(pk=value)
                 elif isinstance(field, models.BooleanField):
-                    if value.lower() in ('1', 'true', 'on'):
-                        value = True
-                    else:
-                        value = False
+                    value = bool(value.lower() in ('1', 'true', 'on'))
                 setattr(obj, attr_name, value)
                 obj.save()
                 value = getattr(obj, attr_name)
                 if hasattr(value, 'pk'):
                     value = value.pk
-    except ValidationError, e:
+    except ValidationError as e:
         success = False
         message = str(e)
     response = {
@@ -1308,16 +1235,16 @@ class AjaxValidFormMixin(RealSubmitMixin):
     def form_valid(self, form):
         response = None
         if self.is_actual_submit():
-            response = self.render_to_json_response({ 'valid': True, 'submitted': True })
+            response = self.render_to_json_response({'valid': True, 'submitted': True})
         if self.is_actual_submit() and getattr(self, FORM_SUBMITTED, False):
             self.valid_submit(form)
 
         if not response:
-            return self.render_to_json_response({ 'valid': True })
+            return self.render_to_json_response({'valid': True})
         return response
 
 class AjaxValidModelFormMixin(RealSubmitMixin):
-    def singleObjectModelToDict(self, object):
+    def singleObjectModelToDict(self, object): # pylint: disable=redefined-builtin
         subObject = object.__dict__
         del subObject['_state']
         return subObject
@@ -1332,14 +1259,18 @@ class AjaxValidModelFormMixin(RealSubmitMixin):
             self.valid_submit(form)
 
         if self.object:
-            return self.render_to_json_response({ 'valid': True, 'submitted': True, 'object': self.singleObjectModelToDict(self.object)})
+            return self.render_to_json_response({
+                'valid': True,
+                'submitted': True,
+                'object': self.singleObjectModelToDict(self.object)
+            })
 
-        return self.render_to_json_response({ 'valid': True })
+        return self.render_to_json_response({'valid': True})
 
 class AjaxInvalidFormMixin(JSONResponseMixin, TemplateResponseMixin):
     def get_form_class(self):
         """
-        A form_class can either be defined by inheriting from AjaxValidatingForm and setting the 
+        A form_class can either be defined by inheriting from AjaxValidatingForm and setting the
         form_class property or by adding the form_class in the url definition.
         """
         form_class = getattr(self, "form_class", False)
@@ -1347,9 +1278,8 @@ class AjaxInvalidFormMixin(JSONResponseMixin, TemplateResponseMixin):
             form_class = self.kwargs["form_class"]
         return form_class
 
-
     def form_invalid(self, form):
-        # Get the BoundFields which contains the errors attribute 
+        # Get the BoundFields which contains the errors attribute
         if isinstance(form, BaseFormSet):
             errors = {}
             formfields = {}
@@ -1365,7 +1295,7 @@ class AjaxInvalidFormMixin(JSONResponseMixin, TemplateResponseMixin):
             errors = form.errors
 
         if self.request.POST.has_key('fields'):
-            fields = request.POST.getlist('fields') + ['__all__']
+            fields = self.request.POST.getlist('fields') + ['__all__']
             errors = dict([(key, val) for key, val in errors.iteritems() if key in fields])
 
         final_errors = {}
@@ -1388,13 +1318,11 @@ class AjaxFormView(AjaxValidFormMixin, AjaxInvalidFormMixin, FormView):
 class AjaxModelFormView(AjaxValidModelFormMixin, AjaxInvalidFormMixin, BaseCreateView):
     pass
 
-SLUG_TO_FORM_REGISTRY = {}
-
 def register_ajax_cls(cls, slug):
     if slug in SLUG_TO_FORM_REGISTRY and SLUG_TO_FORM_REGISTRY[slug] != cls:
-        raise Exception, ('Form slug conflict! Forms %s and %s ' + \
+        raise Exception(('Form slug conflict! Forms %s and %s ' + \
             'both use the same slug "%s"!') \
-                % (cls, SLUG_TO_FORM_REGISTRY[slug], slug)
+                % (cls, SLUG_TO_FORM_REGISTRY[slug], slug))
     SLUG_TO_FORM_REGISTRY[slug] = cls
     for sf in cls.sub_forms:
         sf.parent_form_cls = cls
@@ -1405,10 +1333,9 @@ class SubclassTracker(type(ModelForm)):
     Allows for tracking ajax form subclasses and associating them with
     a unique slug for referencing via ajax calls.
     """
-    def __init__(cls, name, bases, dct):
+    def __init__(cls, name, bases, dct): # pylint: disable=no-self-argument
         slug = None
-        if name != 'BaseAjaxModelForm' and issubclass(cls, BaseAjaxModelForm) \
-        and cls.__module__ != forms.models.__name__:
+        if name != 'BaseAjaxModelForm' and issubclass(cls, BaseAjaxModelForm) and cls.__module__ != forms.models.__name__:
             if hasattr(cls, 'ajax_slug'):
                 slug = cls.ajax_slug
             elif hasattr(cls, 'Meta') and hasattr(cls.Meta, 'ajax_slug'):
@@ -1420,68 +1347,68 @@ class SubclassTracker(type(ModelForm)):
             if slug:
                 register_ajax_cls(cls, slug)
         super(SubclassTracker, cls).__init__(name, bases, dct)
-        
+
 class BaseAjaxModelForm(ModelForm):
-    
+
     __metaclass__ = SubclassTracker
 
     required_fields = ()
 
     ajax_getters = ()
-    
+
     ajax_setters = ()
-    
+
     verbose_names = {}
-    
+
     validation_rules = {}
-    
+
     onchange_callback = {}
-    
+
     method = 'post'
-    
+
     submit_value = 'Save'
-    
+
     template = None
-    
+
     submit_button_classes = ''
-    
+
     can_create = False
-    
+
     can_read = False
-    
+
     can_update = False
-    
+
     can_delete = False
-    
+
     can_view = False
-    
+
     insert_element = 'body'
-    
+
     js_extra = {} # {field name: [js template]}
-                
+
     sub_forms = ()
-    
+
     slug = None
-    
+
     parent_form_cls = None
 
     def __init__(self, *args, **kwargs):
-        
+
         self.id = str(uuid.uuid4()).replace('-', '')
         if 'prefix' not in kwargs:
             kwargs['prefix'] = 'form-%s' % (self.id,)
-        
+
         super(BaseAjaxModelForm, self).__init__(*args, **kwargs)
-        
+
         self._validation_rules = {} # {field:rules}
         self.init()
         self.form_field_names = []
         self.checkbox_fields = []
         self.model_field_name_to_form_field_name = {}
         self.js_extra_rendered = []
-        
+
         assert self.prefix
-        
+
         for fn in self.fields:
 
             # Load client-side form field validation rules.
@@ -1489,51 +1416,51 @@ class BaseAjaxModelForm(ModelForm):
             self.form_field_names.append(vkey)
             self._validation_rules[vkey] = self.get_validation_rules(fn)
             self.model_field_name_to_form_field_name[fn] = vkey
-            
+
             for js_template in self.js_extra.get(fn, []):
                 self.js_extra_rendered.append(js_template % dict(
                     id='id_'+self.model_field_name_to_form_field_name[fn],
                     name=self.model_field_name_to_form_field_name[fn],
                 ))
-            
+
             # Set custom labels.
             if fn in self.verbose_names:
                 self.fields[fn].label = self.verbose_names.get(fn).title()
-            
+
 #            if isinstance(self.fields[fn].widget, forms.widgets.CheckboxInpt):
 #                self.checkbox_fields.append(fn)
 #                self.fields[fn].is_checkbox = True
 #            else:
 #                self.fields[fn].is_checkbox = False
-            
+
             # Tag each field with the primary key of the record it belongs to.
             if self.instance.pk:
                 self.fields[fn].widget.attrs['pk'] = self.instance.pk
-                
+
             # Tag each field with it's vanilla field name.
             self.fields[fn].widget.attrs['field-name'] = fn
-            
+
             # Set optional AJAX setter server-side callbacks.
             if self.instance.pk and fn in self.ajax_setters:
                 self.fields[fn].widget.attrs['ajax-set-url'] = self.set_url(fn)
-        
+
         # Confirm that each sub-form has a field that references
         # the current form's model.
         parent_field_names = set(f.name for f in self.Meta.model._meta.fields)
-        self.sub_formset_instances = [] # [(sf,formset)]
+        self.sub_formset_instances = [] # [(sf, formset)]
         for sf in self.sub_forms:
             #assert isinstance(sf, AjaxSubForm)
             sf.parent_form_cls = type(self)
-            
+
             fk_name_to_model = dict(
                 (f.name, f.rel.to)
                 for f in sf.Meta.model._meta.fields
                 if isinstance(f, models.ForeignKey)
             ) # {name:model}
-            fk_model_to_name = dict((v,k) for k,v in fk_name_to_model.iteritems())
+            fk_model_to_name = dict((v, k) for k, v in fk_name_to_model.iteritems())
             fk_models = fk_name_to_model.values()
             fk_models_set = set(fk_name_to_model.values())
-            
+
             # Identify a ForeignKey field in the sub-form whose model
             # matches the parent form's model.
             if sf.fk:
@@ -1548,7 +1475,7 @@ class BaseAjaxModelForm(ModelForm):
                     'fields in parent model %s. Use fk to specify which ' + \
                     'field to use.') % (sf, self.Meta.model.__name__)
                 sf.fk = fk_model_to_name[self.Meta.model]
-        
+
             if self.instance.pk:
                 #q = sf.Meta.model.objects.filter(**{sf.fk:self.instance})
                 q = sf.get_child_queryset(self.instance)
@@ -1566,34 +1493,34 @@ class BaseAjaxModelForm(ModelForm):
                 for form in formset:
                     self._validation_rules.update(form._validation_rules)
                     self.js_extra_rendered.extend(form.js_extra_rendered)
-    
+
     def init(self):
         self.__attr_to_slug = {}
         self.__slug_to_attr = {}
         for fn in self.Meta.model._meta.fields:
             # Register per-attribute slugs.
             self._attr_to_slug(fn.name)
-    
+
     def get_action_url(self):
         if self.instance:
             return self.create_url
         else:
             return '?'
-    
+
     def get_ajax_getters(self):
         return self.ajax_getters
-    
+
     def get_ajax_setters(self):
         return self.ajax_setters
-    
+
     @property
     def delete_id(self):
         return self.instance.id
-    
+
     @property
     def delete_model(self):
         return self.Meta.model.__name__
-    
+
     def delete_link(self):
         t = Template(u"""<a
             href="#"
@@ -1608,7 +1535,7 @@ class BaseAjaxModelForm(ModelForm):
             form=self,
         ))
         return t.render(c)
-    
+
     def create_button(self):
         t = Template(u"""<input
         type="submit"
@@ -1622,7 +1549,7 @@ class BaseAjaxModelForm(ModelForm):
             form=self,
         ))
         return t.render(c)
-    
+
     def __unicode__(self):
         if self.template:
             c = Context(dict(
@@ -1633,19 +1560,18 @@ class BaseAjaxModelForm(ModelForm):
             return t.render(c)
         else:
             return self.as_p_complete()
-    
+
     def get_submit_value(self):
         return self.submit_value
-    
+
     def get_validation_rules(self, fn):
-        from django.db import models
         field_def = self.Meta.model._meta.get_field(fn)
-        
+
         rules = {}
-        
+
         if self.is_field_required(fn):
             rules['required'] = True
-            
+
         if isinstance(field_def, models.CharField):
             rules['maxlength'] = self.fields[fn].max_length
         elif isinstance(field_def, models.IntegerField):
@@ -1659,16 +1585,16 @@ class BaseAjaxModelForm(ModelForm):
         elif isinstance(field_def, models.DateField):
             rules['date'] = True
         rules.update(self.validation_rules.get(fn, {}))
-            
+
         return rules
-    
+
     def is_field_required(self, fn):
         return fn in self.required_fields
-    
+
     @property
     def model_name(self):
         return self.Meta.model.__name__
-    
+
     @property
     def model_name_slug(self):
         if self.slug:
@@ -1676,17 +1602,17 @@ class BaseAjaxModelForm(ModelForm):
         s = self.Meta.model.__name__.lower().strip()
         s = re.sub('[^a-z0-9]+', '-', s)
         return s
-    
+
     def get_container_class(self):
         return self.model_name_slug+'-container'
-    
+
     def get_object(self, pk):
         return self.Meta.model.objects.get(pk=pk)
-    
+
     def as_p_complete(self, *args, **kwargs):
         rules = self._validation_rules
         validate_options_str = mark_safe(json.dumps({'rules':rules}))
-        
+
         t = Template(u"""
 <form
     id="{{ form_id }}"
@@ -1738,42 +1664,38 @@ class BaseAjaxModelForm(ModelForm):
             js_extra=mark_safe(u'\n'.join(self.js_extra_rendered)),
         ))
         return t.render(c)
-    
+
     def as_p(self, *args, **kwargs):
         resp = super(BaseAjaxModelForm, self).as_p(*args, **kwargs)
         return resp
-    
+
     def _attr_to_slug(self, attr):
         attr = attr.strip()
-        self.__attr_to_slug[attr] = slug = re.sub('[^0-9a-zA-Z_]+', '-', attr)
+        self.__attr_to_slug[attr] = slug = re.sub(r'[^0-9a-zA-Z_]+', '-', attr)
         self.__slug_to_attr[slug] = attr
         return self.__attr_to_slug[attr]
-        
+
     def slug_to_attr(self, slug):
         return self.__slug_to_attr.get(slug, slug)
 
     def clean_data(self, data):
-        from django.db import models
         cleaned = {}
         valid_field_names = set(self.Meta.fields)
         for _k in data.iterkeys():
-            fn = re.sub('^[a-zA-Z0-9\-]+\-', '', _k)
+            fn = re.sub(r'^[a-zA-Z0-9\-]+\-', '', _k)
             if fn not in valid_field_names:
                 continue
-            
+
             field = self.Meta.model._meta.get_field(fn)
             value = data[_k]
             if isinstance(value, (tuple, list)) and len(value) == 1:
                 value = value[0]
-            
+
             if isinstance(field, models.ForeignKey):
                 value = field.rel.to.objects.get(pk=value)
             elif isinstance(field, models.BooleanField):
-                if value.lower() in ('1', 'true', 'on'):
-                    value = True
-                else:
-                    value = False
-                    
+                value = bool(value.lower() in ('1', 'true', 'on'))
+
             cleaned[fn] = value
         return cleaned
 
@@ -1781,31 +1703,14 @@ class BaseAjaxModelForm(ModelForm):
         data = self.clean_data(kwargs)
         obj = self.model.objects.create(**data)
         return obj
-#    
-#    def read(self, request, obj, *args, **kwargs):
-#        try:
-#            obj = self.model.objects.get(pk=pk)
-#            return obj
-#        except self.model.DoesNotExist:
-#            return
-#    
-#    def update(self, request, obj, **kwargs):
-#        try:
-#            obj = self.model.objects.get(pk=pk)
-#            for k, v in kwargs.iteritems():
-#                setattr(obj, k, v)
-#            obj.save()
-#            return obj
-#        except self.model.DoesNotExist:
-#            return
-#    
+
     def delete(self, request, obj):
         success = False
         delete_model = self.delete_model
         delete_id = self.delete_id
         if self.can_delete:
             try:
-                self.model.objects.get(pk=pk).delete()
+                self.model.objects.get(pk=delete_id).delete()
                 obj.delete()
                 success = True
             except self.model.DoesNotExist:
@@ -1820,22 +1725,22 @@ class BaseAjaxModelForm(ModelForm):
             return {
                 'success':success
             }
-    
+
     def has_view_permission(self, request, obj):
         return self.can_view
-    
+
     def has_create_permission(self, request):
         return self.can_create
-    
+
     def has_read_permission(self, request, obj):
         return self.can_read
-    
+
     def has_update_permission(self, request, obj):
         return self.can_update
-    
+
     def has_delete_permission(self, request, obj):
         return self.can_delete
-    
+
     def has_set_permission(self, request, obj, attr):
         for _attr in self.ajax_setters:
             if _attr.startswith('set_'):
@@ -1843,7 +1748,7 @@ class BaseAjaxModelForm(ModelForm):
             if _attr == attr:
                 return True
         return False
-    
+
     def has_get_permission(self, request, obj, attr):
         for _attr in self.ajax_getters:
             if _attr.startswith('get_'):
@@ -1851,7 +1756,7 @@ class BaseAjaxModelForm(ModelForm):
             if _attr == attr:
                 return True
         return False
-    
+
     @property
     def view_url(self):
         return '/%s/%s/%s' % (
@@ -1859,7 +1764,7 @@ class BaseAjaxModelForm(ModelForm):
             self.model_name_slug,
             C.VIEW,
         )
-    
+
     @property
     def create_url(self):
         return '/%s/%s/%s' % (
@@ -1867,7 +1772,7 @@ class BaseAjaxModelForm(ModelForm):
             self.model_name_slug,
             C.CREATE,
         )
-        
+
     @property
     def read_url(self):
         if not hasattr(self, 'instance') or not self.instance:
@@ -1878,7 +1783,7 @@ class BaseAjaxModelForm(ModelForm):
             C.READ,
             self.instance.pk,
         )
-        
+
     @property
     def update_url(self):
         if not hasattr(self, 'instance') or not self.instance:
@@ -1889,7 +1794,7 @@ class BaseAjaxModelForm(ModelForm):
             C.UPDATE,
             self.instance.pk,
         )
-        
+
     @property
     def delete_url(self):
         if not hasattr(self, 'instance') or not self.instance:
@@ -1900,30 +1805,30 @@ class BaseAjaxModelForm(ModelForm):
             C.DELETE,
             self.instance.pk,
         )
-    
+
     def get_parent_obj(self, obj):
         """
         Returns the parent object for the parent form associated with
         the current child object and form.
         This must be defined for any form used as a sub-form.
         """
-        override
-    
+        raise NotImplementedError
+
     @classmethod
     def get_child_queryset(cls, parent_obj):
         return cls.Meta.model.objects.filter(**{cls.fk:parent_obj})
-        
+
     def view(self, request, obj):
         """
         Returns the partial view markup for the object and form.
         """
         if self.parent_form_cls:
             obj = self.get_parent_obj(obj)
-            form = self.parent_form_cls(instance=obj)
+            form = self.parent_form_cls(instance=obj) # pylint: disable=not-callable
         else:
             form = type(self)(instance=obj)
         return unicode(form)
-    
+
     def get_url(self, attr):
         if not hasattr(self, 'instance') or not self.instance:
             return
@@ -1934,7 +1839,7 @@ class BaseAjaxModelForm(ModelForm):
             attr,
             self.instance.pk,
         )
-    
+
     def set_url(self, attr):
         if not hasattr(self, 'instance') or not self.instance:
             return
@@ -1945,28 +1850,13 @@ class BaseAjaxModelForm(ModelForm):
             attr,
             self.instance.pk,
         )
-    
+
     def render_sub_forms(self):
         if not self.instance.pk:
             return ''
         try:
             c = []
             for sf, formset in self.sub_formset_instances:
-#            for sf in self.sub_forms:
-#                q = sf.Meta.model.objects.filter(**{sf.fk:self.instance})
-#                
-#                formset_cls = modelformset_factory(
-#                    sf.Meta.model,
-#                    form=sf,
-#                    extra=sf.extra,#number of empty forms to show
-#                )
-#                formset = formset_cls(
-#                    queryset=q,
-#                    initial=[{sf.fk:self.instance}],
-#                    prefix=sf.prefix,
-#                )
-#                self.sub_formset_instances.append(formset)
-                
                 t = Template(u"""
 {% for form in formset %}{{ form }}{% endfor %}
                 """)
@@ -1981,7 +1871,7 @@ class BaseAjaxModelForm(ModelForm):
                     c.append(u'<div class="sub-form-container"><h3 class="sub-forms">%s</h3>' % (vn.title(),))
                 c.append(_c + u'</div>')
             return mark_safe(u'<br/>'.join(c))
-        except Exception, e:
+        except Exception as e:
             if settings.DEBUG:
                 return '[%s]' % str(e)
 
@@ -1989,9 +1879,9 @@ def AjaxSubForm(form_cls, slug, **kwargs):
     """
     Helper method for modifying one form to act as a sub-form to a parent-form.
     """
-    id = str(uuid.uuid4()).replace('-', '')
+    _id = str(uuid.uuid4()).replace('-', '')
     new_cls = type(
-        "_%s_%s" % (form_cls.__name__, id),
+        "_%s_%s" % (form_cls.__name__, _id),
         (form_cls,),
         {
             'extra':kwargs.get('extra', 0),
@@ -2007,12 +1897,12 @@ def AjaxSubForm(form_cls, slug, **kwargs):
     return new_cls
 
 class B(object):
-    
-    def __init__(self, inline, object, request):
+
+    def __init__(self, inline, object, request): # pylint: disable=redefined-builtin
         self.inline = inline
         self.object = object
         self.request = request
-        
+
     def __iter__(self):
         for fn in self.inline.list_display:
             if hasattr(self.object, fn):
@@ -2027,59 +1917,59 @@ class B(object):
 Action = namedtuple('Action', ['name', 'short_description'])
 
 class A(object):
-    
+
     def __init__(self, inline, objects, request):
         self.inline = inline
         self.objects = objects
         self.request = request
-        
+
     def __iter__(self):
-        for object in self.objects:
-            yield B(inline=self.inline, object=object, request=self.request)
+        for obj in self.objects:
+            yield B(inline=self.inline, object=obj, request=self.request)
 
 class BaseInlineView(object):
-    
+
     template_name = 'ajax_forms/generic_edit_inline.html'
     template_row_name = 'ajax_forms/generic_edit_inline_row.html'
-    
+
     model = None
-    
+
     fk_name = None
-    
+
     list_display = ()
-    
+
     collapsable = True
-    
+
     collapsed = False
-    
+
     can_add = True
-    
+
     add_form = None
-    
+
     can_delete = True
-    
+
     def get_ajax_channel(self):
         return self.model.__name__.lower()
-    
+
     def process_ajax_add(self, request, obj):
         raise NotImplementedError
-    
+
     def get_context_data(self, *args, **kwargs):
         return dict()
-    
-    def get_queryset(self, object):
+
+    def get_queryset(self, object): # pylint: disable=redefined-builtin
         if not object:
             return
         if self.fk_name:
             return getattr(object, self.fk_name).all()
         matching_fields = [(_.get_accessor_name(), _.model) for _ in object._meta.get_all_related_objects() if _.model == self.model]
         if len(matching_fields) > 1:
-            raise Exception, 'Ambiguous relation. Please specify fk_name.'
+            raise Exception('Ambiguous relation. Please specify fk_name.')
         elif not matching_fields:
-            raise Exception, 'No matching field related to model %s.' % (self.model,)
+            raise Exception('No matching field related to model %s.' % (self.model,))
         name = matching_fields[0][0]
         return getattr(object, name).all()
-    
+
     def get_field_titles(self):
         for fn in self.list_display:
             if hasattr(self, fn) and hasattr(getattr(self, fn), 'short_description'):
@@ -2088,17 +1978,17 @@ class BaseInlineView(object):
                 yield self.model._meta.get_field(fn).verbose_name
             else:
                 yield fn
-    
+
     def get_title(self, request, obj=None):
         if isinstance(self.model._meta.verbose_name_plural, basestring):
             return self.model._meta.verbose_name_plural
         return self.model.__name__ + 's'
-    
+
     def get_add_form(self):
         return self.add_form
-    
+
     def render(self, request, obj):
-        
+
         data = self.get_context_data()
         data['object'] = obj
         data['request'] = request
@@ -2119,13 +2009,13 @@ class _CommonViewMixin(object):
     """
     Contains variables and methods used by both edit and list views.
     """
-    
+
     model = None
-    
+
     model_name = None
-    
+
     verb = None
-    
+
     def get_model_name(self):
         if self.model_name:
             s = self.model_name.strip()
@@ -2135,39 +2025,38 @@ class _CommonViewMixin(object):
             else:
                 s = type(self.model).__name__.strip()
         else:
-            raise NotImplementedError, 'No model name defined.'
+            raise NotImplementedError('No model name defined.')
         return s[0].upper() + s[1:]
-    
+
     def get_verb(self):
         return self.verb
-    
+
     def get_breadcrumbs(self):
         return [self.get_model_name(), self.get_verb()]
 
 class BaseEditView(TemplateView, _CommonViewMixin):
-    
+
     template_name = 'ajax_forms/generic_edit.html'
-    
+
     object_id_kwargs_field = 'object_id'
-    
+
     form = None
-    
+
     inlines = ()
-    
+
     extra_buttons = []
-    
+
     def get_form(self):
         """
         Returns the form class to instantiate.
         """
-        print 'af.self.form:',self.form
         if not self.form:
-            raise NotImplementedError, "A form class is not defined."
+            raise NotImplementedError("A form class is not defined.")
         return self.form
-    
+
     def get_form_initial(self):
         return {}
-    
+
     def get_form_params(self):
         request = self.request
         args = []
@@ -2178,36 +2067,35 @@ class BaseEditView(TemplateView, _CommonViewMixin):
             kwargs['data'] = request.POST
             kwargs['files'] = request.FILES
         return args, kwargs
-    
+
     def get_form_instance(self):
         args, kwargs = self.get_form_params()
-        print 'af.get_form_instance:',args,kwargs
-        form = self.get_form()(*args, **kwargs)
+        form = self.get_form()(*args, **kwargs) # pylint: disable=not-callable
         return form
-    
+
     def get_extra_buttons(self):
         lst = list()
-        object = self.get_object()
+        obj = self.get_object()
         for _btn in self.extra_buttons:
-            lst.append(btn)
+            lst.append(_btn)
         return lst
-    
+
     @property
     def object_id(self):
         return self.kwargs.get(self.object_id_kwargs_field)
-    
+
     def get_object(self):
         if self.object_id:
             try:
                 return self.model.objects.get(id=self.object_id)
             except self.model.DoesNotExist:
                 raise Http404
-    
+
     def get_verb(self):
         if self.object_id:
             return 'Edit'
         return 'Create'
-    
+
     def get_context_data(self, *args, **kwargs):
         ctx = super(TemplateView, self).get_context_data(*args, **kwargs)
         ctx['breadcrumbs'] = self.get_breadcrumbs()
@@ -2269,7 +2157,7 @@ class BaseEditView(TemplateView, _CommonViewMixin):
         return super(BaseEditView, self).get(*args, **kwargs)
 
 class ColumnField(object):
-    
+
     def __init__(self, request, name, label, param, default, sort_field):
         self.request = request
         self.name = name
@@ -2277,7 +2165,7 @@ class ColumnField(object):
         self.param = param
         self.default = default
         self.sort_field = sort_field
-        
+
     def as_link(self):
         if self.sort_field:
             return sort_link(
@@ -2291,50 +2179,49 @@ class ColumnField(object):
         else:
             return clean_title(self.label)
 
-from django.contrib.admin.options import ModelAdmin
 
 class BaseListView(ListView, _CommonViewMixin):
 
     paginate_by = 15
-    
+
     title = None
-    
+
     search_fields = ()
-    
+
     list_display = ()
-    
+
     list_display_links = ()
-    
+
     list_filter = ()
-    
+
     filter_templates = {}
-    
+
     actions = ()
-    
+
     verb = 'List'
-    
+
     ordering = []
-    
+
     ordering_param = 'o'
-    
+
     @property
     def template_name(self):
         if self.ajax:
             return 'ajax_forms/generic_listview_results.html'
         else:
             return 'ajax_forms/generic_listview.html'
-    
+
     @property
     def q(self):
         return self.request.GET.get('q', '').strip()
-    
+
     @property
     def ajax(self):
         return self.request.REQUEST.get('ajax', '').lower() in ('1', 'true')
-    
+
     def get_actions(self):
         return self.actions
-    
+
     def get_filter_dict(self):
         if hasattr(self, '_filter_dict') and self._filter_dict:
             return self._filter_dict
@@ -2346,24 +2233,22 @@ class BaseListView(ListView, _CommonViewMixin):
                 clean_name = 'clean_%s' % lf_name
                 if hasattr(self, clean_name):
                     d[lf_name] = getattr(self, clean_name)(d[lf_name])
-            except Exception, e:
+            except Exception as e:
                 raise
         return d
-    
+
     def get_queryset_all(self):
         return self.model.objects.all()
-    
+
     def get_order_by(self):
         ordering = self.request.GET.get('o', ','.join(self.ordering or []))
-        ordering = ordering.replace(' ','').split(',')
+        ordering = ordering.replace(' ', '').split(',')
         return [_ for _ in ordering if _.strip()]
-    
+
     def get_queryset(self):
         q = self.get_queryset_all()
-        
         qtext = self.q
         subq = None
-        #print 'self.search_fields:',self.search_fields
         if qtext:
             #TODO:support __search with fulltext index?
             for sf in self.search_fields:
@@ -2372,22 +2257,15 @@ class BaseListView(ListView, _CommonViewMixin):
                     subq = _subq
                 else:
                     subq |= _subq
-            #print 'subq:',subq
             if subq:
                 q = q.filter(subq)
-        
+
         filter_dict = self.get_filter_dict()
         for lf_name, lf_query, lf_field, lf_func, lf_func_value_name, lf_func_order_by in self.list_filter:
-#            print 'get_queryset:',lf_name, lf_query, lf_field, lf_func
             v = filter_dict.get(lf_name)
-#            print 'v:',repr(v),type(v)
             if v is None or v == '':
                 continue
             q = q.filter(**{lf_query: v})
-#            if lf_func_order_by:
-#                q = lf_func_order_by(q)
-#        print '='*80
-#        print 'count:',q.count()
 
         order_by = self.get_order_by()
         if order_by:
@@ -2395,20 +2273,20 @@ class BaseListView(ListView, _CommonViewMixin):
             q = q.order_by(*order_by)
 
         return q
-    
+
     def get_object_url(self, obj):
-        todo
-    
+        raise NotImplementedError
+
     def get_single_name(self):
         return self.model.__name__
-    
+
     def get_plural_name(self):
         return self.model.__name__ + 's'
-    
+
     def get_context_data(self, *args, **kwargs):
-        
+
         self._filter_dict = {}
-        
+
         ctx = super(BaseListView, self).get_context_data(*args, **kwargs)
         ctx['breadcrumbs'] = self.get_breadcrumbs()
         ctx['search_fields'] = self.search_fields
@@ -2423,23 +2301,20 @@ class BaseListView(ListView, _CommonViewMixin):
             name = None
             if isinstance(action, basestring) and hasattr(self, action):
                 func = getattr(self, action)
-                #print 'func:',func
                 name = action
                 short_description = getattr(func, 'short_description', action) % dict(verbose_name_plural=verbose_name_plural)
-                #print 'short_description:',short_description
                 actions.append(Action(
                     name=action,
                     short_description=short_description,
                 ))
-#        print 'actions:',actions
         ctx['actions'] = actions
         ctx['q'] = self.q
-                
+
         queryset = kwargs.get('object_list')
         request = self.request
         filter_dict = self.get_filter_dict()
         page_size = self.get_paginate_by(queryset)
-        
+
         field_titles = []
         all_model_field_names = set(self.model._meta.get_all_field_names())
         for field in self.list_display:
@@ -2472,12 +2347,11 @@ class BaseListView(ListView, _CommonViewMixin):
                 )
             field_titles.append(ColumnField(**kwargs))
         ctx['field_titles'] = field_titles
-        
+
         actions = self.get_actions()
         valid_actions = set(actions)
-        
+
         list_filter_results = []
-        #print 'filter_dict:',filter_dict
         for lf_name, lf_query, lf_filter, lf_func, lf_func_value_name, lf_func_order_by in self.list_filter:
             unique_values = set()
             nq = queryset.values(lf_filter).distinct()
@@ -2497,25 +2371,11 @@ class BaseListView(ListView, _CommonViewMixin):
                     lf_func_value_name(unique_key),
                     str(filter_dict.get(lf_name)) == str(unique_key),
                 ))
-                
+
             list_filter_results.append((lf_name, final_label_values))
-#            list_filter_results.append((
-#                lf_name,
-#                sorted((
-#                    _v,
-#                    lf_func_value_name(_v),
-#                    str(filter_dict.get(lf_name)) == str(_v),)
-#                    for _v in unique_values),
-#            ))
-        #print 'list_filter_results:',list_filter_results
-        
+
         path = '/' + ('/'.join([_ for _ in request.path.split('/') if _.strip()][:-1])) + '/'
         action = request.POST.get('action')
-#        print '!'*80
-#        print 'post:',request.POST
-#        print 'request:',request.REQUEST
-#        print 'action:',action
-#        print 'valid_actions:',valid_actions
         next_url = None
         if action in valid_actions and hasattr(self, action):
             next_url = request.REQUEST.get('next_url')
@@ -2525,34 +2385,34 @@ class BaseListView(ListView, _CommonViewMixin):
                 obj_ids = map(int, obj_ids.split(','))
                 action_queryset = action_queryset.filter(id__in=obj_ids)
             response = getattr(self, action)(request, action_queryset)
-#            print 'response:',response
             if isinstance(response, HttpResponse):
                 return response
-            #sys.exit()
             return HttpResponseRedirect(next_url)
-        
+
         ctx['list_filter_results'] = list_filter_results
-        
-        class B(list):
+
+        class _B(list):
             """
             Proxy object for each queryset record.
             """
-            
+
             def __init__(self, *args):
                 super(list, self).__init__(*args)
                 self.id = None
-        
-        class A(object):
+
+        class _A(object):
             """
             Wrapper around the queryset to allow easily iterating over fields
             in the template.
             """
+
             def __init__(self, lv, object_list):
                 self.lv = lv
                 self.object_list = object_list
+
             def __iter__(self):
                 for obj in self.object_list:
-                    o = B()
+                    o = _B()
                     o.id = obj.id
                     made_link = False
                     for k in self.lv.list_display:
@@ -2565,104 +2425,84 @@ class BaseListView(ListView, _CommonViewMixin):
                         elif hasattr(obj, k):
                             value = getattr(obj, k)
                         else:
-                            raise Exception, 'Invalid column "%s".' % (k,)
-                        
+                            raise Exception('Invalid column "%s".' % (k,))
+
                         if (not self.lv.list_display_links and not made_link) or k in self.lv.list_display_links:
                             made_link = True
                             object_url = self.lv.get_object_url(obj)
                             if object_url:
                                 value = mark_safe('<a href="%s">%s</a>' % (object_url, value,))
-                            
+
                         o.append(value)
                     yield o
-        
-        ctx['page_obj_iterator'] = A(self, ctx['page_obj'])
+
+        ctx['page_obj_iterator'] = _A(self, ctx['page_obj'])
         ctx['list_filter_results'] = list_filter_results
         ctx['next_url'] = next_url
         return ctx
 
     def base_export_csv(self, request, queryset, columns=None):
         import csv
-        
+
         response = HttpResponse(mimetype='text/csv')
         response['Content-Disposition'] = \
             'attachment; filename=%s-%i%02i%02i.csv' % (
             self.get_plural_name().lower(),
             date.today().year, date.today().month, date.today().day)
-            
+
         # Create a CSV writer.
         writer = csv.writer(response)
-    
+
         # Get the IDs and columns to export.
-        #ids =  request.GET.get('ids', '').split(',')
-        #columns =  request.GET.get('columns', '').split(',')
         columns = columns or self.list_display
-    
+
         # Write a header row.
         writer.writerow(columns)
-    
+
         # Write a row for each ID.
         for obj in queryset:
             row = []
-            for column in columns: 
+            for column in columns:
                 value = getattr(obj, column)
                 if callable(value):
                     value = value()
                 row.append(value)
             writer.writerow(row)
-    
+
         return response
-    
+
     def get(self, *args, **kwargs):
         return super(BaseListView, self).get(*args, **kwargs)
-    
+
     def post(self, *args, **kwargs):
         ret = self.get_context_data(object_list=self.get_queryset())
         if ret and isinstance(ret, HttpResponse):
             return ret
         return HttpResponseRedirect(self.request.META.get('HTTP_REFERER'))
 
-from django.views.generic.edit import FormView
 
 class BaseAdminView(FormView):#TemplateView):
-    
+
     app_label = '(app_label)'
     verbose_name = '(verbose_name)'
     verbose_name_plural = '(verbose_name_plural)'
     title = '(title)'
-    
+
     fieldsets = []
-    
-    #form_class =
-    #success_url = 
-    
-#    def get_form_kwargs(self):
-#        """
-#        Returns the keyword arguments for instantiating the form.
-#        """
-#        super(BaseAdminView, self).get_form_kwargs()
-#        kwargs = {'initial': self.get_initial()}
-#        if self.request.method in ('POST', 'PUT'):
-#            kwargs.update({
-#                'data': self.request.POST,
-#                'files': self.request.FILES,
-#            })
-#        return kwargs
-    
+
     def form_valid(self, form):
         return super(BaseAdminView, self).form_valid(form)
-    
+
     def get_context_data(self, *args, **kwargs):
-        from django.contrib import admin
         ctx = super(BaseAdminView, self).get_context_data(*args, **kwargs)
 
         # Required boilerplate admin template variables.
         ctx['title'] = self.title
         ctx['app_label'] = self.app_label
         ctx['has_change_permission'] = True
-        class C(object):
+        class _C(object):
             pass
-        ctx['opts'] = opts = C()
+        ctx['opts'] = opts = _C()
         opts.app_label = self.app_label
         opts.object_name = self.app_label
         opts.verbose_name = self.verbose_name
@@ -2678,10 +2518,10 @@ class BaseAdminView(FormView):#TemplateView):
         ctx['save_as'] = False
         ctx['show_save'] = True
         ctx['fieldsets'] = self.fieldsets
-        
+
         form_class = self.get_form_class()
         form = self.get_form(form_class)
-        
+
         ctx['form'] = form
         ctx['adminform'] = admin.helpers.AdminForm(
             form=form,

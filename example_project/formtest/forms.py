@@ -10,3 +10,4 @@ class ContactForm(forms.Form):
 class ContactModelForm(forms.ModelForm):
     class Meta:
         model = Contact
+        fields = '__all__'

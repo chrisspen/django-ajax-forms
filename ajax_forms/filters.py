@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import re
 
 from django.contrib.admin.filters import FieldListFilter
@@ -9,7 +11,7 @@ def TitledListFilter(title, list_filter_class=FieldListFilter):
     class provides no simple way to do this.
     """
     def init(self, field, request, params, model, model_admin, field_path):
-        
+
         # Determine the true class at runtime.
         # Ideally, we wouldn't have to do this if admin.validation.validate()
         # didn't force the list filter to be an subclass of FieldListFilter.
@@ -21,12 +23,12 @@ def TitledListFilter(title, list_filter_class=FieldListFilter):
             break
         if not true_cls:
             raise Exception, 'No filter class found.'
-        
+
         # Automagically transform the current object into an instance of
         # the target class.
         self.__class__ = true_cls
         self.__class__.__init__(self, field, request, params, model, model_admin, field_path)
-        
+
         # Now, set a specific title. This is what all this nonsense is for.
         self.title = title
 

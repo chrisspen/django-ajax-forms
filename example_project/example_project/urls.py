@@ -1,17 +1,24 @@
-from django.conf.urls import patterns, include, url
+try:
+    # Removed in Django 1.6
+    from django.conf.urls.defaults import url, include
+except ImportError:
+    from django.conf.urls import url, include
 
-# Uncomment the next two lines to enable the admin:
-# from django.contrib import admin
-# admin.autodiscover()
+try:
+    # Relocated in Django 1.6
+    from django.conf.urls.defaults import patterns
+except ImportError:
+    # Completely removed in Django 1.10
+    try:
+        from django.conf.urls import patterns
+    except ImportError:
+        patterns = None
 
-urlpatterns = patterns('',
-    # Examples:
-    # url(r'^$', 'ajax_validation_proj.views.home', name='home'),
+_patterns = [
     url(r'', include('formtest.urls')),
+]
 
-    # Uncomment the admin/doc line below to enable admin documentation:
-    # url(r'^admin/doc/', include('django.contrib.admindocs.urls')),
-
-    # Uncomment the next line to enable the admin:
-    # url(r'^admin/', include(admin.site.urls)),
-)
+if patterns is None:
+    urlpatterns = _patterns
+else:
+    urlpatterns = patterns('', *_patterns)

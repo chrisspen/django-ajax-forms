@@ -1,11 +1,13 @@
 import re
 
+from django.core.urlresolvers import reverse
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from django import template
 from django.contrib.admin.templatetags.admin_list import result_headers, result_hidden_fields, results
-from django.contrib.admin.views.main import (ALL_VAR, EMPTY_CHANGELIST_VALUE,
-    ORDER_VAR, PAGE_VAR, SEARCH_VAR)
+from django.contrib.admin.views.main import ALL_VAR, PAGE_VAR
+
+DOT = '.'
 
 register = template.Library()
 
@@ -23,7 +25,7 @@ def next_query_string(request, param_name, param_value, remove=0):
     elif param_name+'=' in new_path:
         new_path = re.sub(param_name+'=[^&]+', param_name+'='+param_value, new_path)
     else:
-        new_path = new_path + '&' + param_name+'='+param_value
+        new_path = new_path + '&' + param_name + '=' + param_value
     if new_path.startswith('&'):
         new_path = new_path[1:]
     return new_path
@@ -42,22 +44,22 @@ def nbsp(s):
 def sort_link(request, param_name, field_name, default='', label=''):
     """
     Creates a list view column sort by link to be used in the list header.
-    
+
     param_name := the name of the URL GET parameter to use when building URL
     field_name := the Django model field name
     default := the default Django model field name to sort by
     label := the text to use for rendering the column head
     """
     if isinstance(default, basestring):
-        order_by = request.GET.get(param_name, default).replace(' ','').split(',')
+        order_by = request.GET.get(param_name, default).replace(' ', '').split(',')
         order_by = [_ for _ in order_by if _.strip()]
     else:
         assert isinstance(default, (tuple, list))
         order_by = default
-    
+
     priority = None
     direction = None
-    for i,o in enumerate(order_by):
+    for i, o in enumerate(order_by):
         if o.startswith('-'):
             _name, _dir = (o[1:], 'asc')
         else:
@@ -66,10 +68,10 @@ def sort_link(request, param_name, field_name, default='', label=''):
             priority = i
             direction = _dir
             break
-            
+
     if not order_by:
         return ''
-    
+
     new_path = request.META['QUERY_STRING']
     opposite_dir = ''
     if priority is None:
@@ -91,10 +93,9 @@ def sort_link(request, param_name, field_name, default='', label=''):
     )
 
 @register.simple_tag
-def daf_admin_urlname(opts, action, site=None, id=None):
-    from django.core.urlresolvers import reverse
+def daf_admin_urlname(opts, action, site=None, id=None): # pylint: disable=redefined-builtin
     site_name = site.name if site else 'admin'
-    args=None
+    args = None
     if id:
         args = (id,)
     return reverse('%s:%s_%s_%s' % (site_name, opts.app_label, opts.module_name, action), args=args)
@@ -126,10 +127,8 @@ def daf_admin_actions(context):
     context['action_form'].fields['action'].choices[0] = ('', '--- Select Action ---')
     return context
 
-DOT = '.'
-
 @register.simple_tag
-def paginator_number(cl,i):
+def paginator_number(cl, i):
     """
     Generates an individual page index link in a paginated list.
     """
