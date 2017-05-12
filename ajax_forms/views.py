@@ -1,3 +1,4 @@
+import json
 import re
 import uuid
 from datetime import date
@@ -31,7 +32,6 @@ from django.conf import settings
 from django.contrib.admin import widgets, helpers
 from django.db import models, transaction, router
 from django.http import HttpResponse, Http404
-from django.utils import simplejson
 from django.template.response import SimpleTemplateResponse, TemplateResponse
 from django.views.decorators.http import require_POST
 from django.forms.models import modelformset_factory
@@ -1205,7 +1205,7 @@ def handle_ajax_crud(request, model_name, action, **kwargs):
             response,
             content_type='text/html')
     return HttpResponse(
-        simplejson.dumps(response),
+        json.dumps(response),
         content_type='application/json')
 
 @csrf_exempt
@@ -1285,7 +1285,7 @@ def handle_ajax_etter(request, model_name, action, attr_slug, pk):
     if attr_name in form.onchange_callback:
         response['callback'] = form.onchange_callback[attr_name]
     return HttpResponse(
-        simplejson.dumps(response),
+        json.dumps(response),
         content_type='application/json')
 
 class JSONResponseMixin(object):
@@ -1296,7 +1296,7 @@ class JSONResponseMixin(object):
         return HttpResponse(content, content_type='application/json', **httpresponse_kwargs)
 
     def convert_context_to_json(self, context):
-        return simplejson.dumps(context)
+        return json.dumps(context)
 
 class RealSubmitMixin(object):
     def is_actual_submit(self):
@@ -1685,7 +1685,7 @@ class BaseAjaxModelForm(ModelForm):
     
     def as_p_complete(self, *args, **kwargs):
         rules = self._validation_rules
-        validate_options_str = mark_safe(simplejson.dumps({'rules':rules}))
+        validate_options_str = mark_safe(json.dumps({'rules':rules}))
         
         t = Template(u"""
 <form
