@@ -22,7 +22,7 @@ def TitledListFilter(title, list_filter_class=FieldListFilter):
             true_cls = cls
             break
         if not true_cls:
-            raise Exception, 'No filter class found.'
+            raise Exception('No filter class found.')
 
         # Automagically transform the current object into an instance of
         # the target class.

@@ -90,6 +90,8 @@ except ImportError:
 from ajax_forms import constants as C
 from ajax_forms.templatetags.daf_help import sort_link, clean_title
 
+from six import string_types, text_type
+
 SLUG_TO_FORM_REGISTRY = {}
 
 FORM_SUBMITTED = "valid_submit"
@@ -131,7 +133,7 @@ class Button(object):
             opts = self.model_view.model._meta
             if self.url:
                 url_str = self.url
-            elif isinstance(self.view, basestring):
+            elif isinstance(self.view, string_types):
                 view_name = self.view.format(
                     site_name=self.model_view.admin_site.name,
                     app_label=opts.app_label,
@@ -1067,8 +1069,8 @@ class ValidationError(Exception):
 class BaseAjaxFormSet(BaseFormSet):
 
     def __unicode__(self):
-        _forms = u' '.join([unicode(form) for form in self])
-        return mark_safe(u'\n'.join([unicode(self.management_form), _forms]))
+        _forms = u' '.join([text_type(form) for form in self])
+        return mark_safe(u'\n'.join([text_type(self.management_form), _forms]))
 
 @csrf_exempt
 def handle_ajax_crud(request, model_name, action, **kwargs):
@@ -1827,7 +1829,7 @@ class BaseAjaxModelForm(ModelForm):
             form = self.parent_form_cls(instance=obj) # pylint: disable=not-callable
         else:
             form = type(self)(instance=obj)
-        return unicode(form)
+        return text_type(form)
 
     def get_url(self, attr):
         if not hasattr(self, 'instance') or not self.instance:
@@ -1980,7 +1982,7 @@ class BaseInlineView(object):
                 yield fn
 
     def get_title(self, request, obj=None):
-        if isinstance(self.model._meta.verbose_name_plural, basestring):
+        if isinstance(self.model._meta.verbose_name_plural, string_types):
             return self.model._meta.verbose_name_plural
         return self.model.__name__ + 's'
 
@@ -2299,7 +2301,7 @@ class BaseListView(ListView, _CommonViewMixin):
         for action in self.get_actions():
             func = None
             name = None
-            if isinstance(action, basestring) and hasattr(self, action):
+            if isinstance(action, string_types) and hasattr(self, action):
                 func = getattr(self, action)
                 name = action
                 short_description = getattr(func, 'short_description', action) % dict(verbose_name_plural=verbose_name_plural)
