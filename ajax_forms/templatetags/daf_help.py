@@ -7,6 +7,8 @@ from django import template
 from django.contrib.admin.templatetags.admin_list import result_headers, result_hidden_fields, results
 from django.contrib.admin.views.main import ALL_VAR, PAGE_VAR
 
+from six import string_types
+
 DOT = '.'
 
 register = template.Library()
@@ -50,7 +52,7 @@ def sort_link(request, param_name, field_name, default='', label=''):
     default := the default Django model field name to sort by
     label := the text to use for rendering the column head
     """
-    if isinstance(default, basestring):
+    if isinstance(default, string_types):
         order_by = request.GET.get(param_name, default).replace(' ', '').split(',')
         order_by = [_ for _ in order_by if _.strip()]
     else:
