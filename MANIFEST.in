@@ -1,0 +1,9 @@
+recursive-include ajax_forms/templates *
+recursive-include ajax_forms/static *
+recursive-include ajax_forms/tests/fixtures *
+recursive-include ajax_forms/tests/templates *
+recursive-include example_project/ *
+recursive-include example_project/formtest/templates *
+include requirements-min-django.txt
+include requirements.txt
+include requirements-test.txt

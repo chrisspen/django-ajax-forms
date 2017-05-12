@@ -49,3 +49,4 @@ Thumbs.db
 *.egg-info
 /dist
 /*.geany
+/.tox
