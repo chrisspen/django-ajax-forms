@@ -50,3 +50,5 @@ Thumbs.db
 /dist
 /*.geany
 /.tox
+/.env
+/*.out

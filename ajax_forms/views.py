@@ -513,10 +513,9 @@ class ModelView(ModelAdmin):
             msg = _('The %(name)s "%(obj)s" was added successfully. You may add another %(name)s below.') % msg_dict
             self.message_user(request, msg)
             return HttpResponseRedirect(request.path)
-        else:
-            msg = _('The %(name)s "%(obj)s" was added successfully.') % msg_dict
-            self.message_user(request, msg)
-            return self.response_post_save_add(request, obj)
+        msg = _('The %(name)s "%(obj)s" was added successfully.') % msg_dict
+        self.message_user(request, msg)
+        return self.response_post_save_add(request, obj)
 
     def response_change(self, request, obj):
         """
@@ -532,8 +531,7 @@ class ModelView(ModelAdmin):
             self.message_user(request, msg)
             if "_popup" in request.REQUEST:
                 return HttpResponseRedirect(request.path + "?_popup=1")
-            else:
-                return HttpResponseRedirect(request.path)
+            return HttpResponseRedirect(request.path)
         elif "_saveasnew" in request.POST:
             msg = _('The %(name)s "%(obj)s" was added successfully. You may edit it again below.') % msg_dict
             self.message_user(request, msg)
@@ -547,10 +545,9 @@ class ModelView(ModelAdmin):
             return HttpResponseRedirect(reverse('%s:%s_%s_add' %
                                         (self.admin_site.name, opts.app_label, opts.module_name),
                                         current_app=self.admin_site.name))
-        else:
-            msg = _('The %(name)s "%(obj)s" was changed successfully.') % msg_dict
-            self.message_user(request, msg)
-            return self.response_post_save_change(request, obj)
+        msg = _('The %(name)s "%(obj)s" was changed successfully.') % msg_dict
+        self.message_user(request, msg)
+        return self.response_post_save_change(request, obj)
 
     def response_post_save_add(self, request, obj):
         """
@@ -628,7 +625,7 @@ class ModelView(ModelAdmin):
                 msg = _("Items must be selected in order to perform "
                         "actions on them. No items have been changed.")
                 self.message_user(request, msg)
-                return None
+                return
 
             if not select_across:
                 # Perform the action only on the selected objects
@@ -641,12 +638,11 @@ class ModelView(ModelAdmin):
             # citizen and redirect back to the changelist page.
             if isinstance(response, HttpResponse):
                 return response
-            else:
-                return HttpResponseRedirect(request.get_full_path())
+            return HttpResponseRedirect(request.get_full_path())
         else:
             msg = _("No action selected.")
             self.message_user(request, msg)
-            return None
+            return
 
     def get_add_view_initial(self, request):
         model = self.model
@@ -1507,8 +1503,7 @@ class BaseAjaxModelForm(ModelForm):
     def get_action_url(self):
         if self.instance:
             return self.create_url
-        else:
-            return '?'
+        return '?'
 
     def get_ajax_getters(self):
         return self.ajax_getters
@@ -1561,8 +1556,7 @@ class BaseAjaxModelForm(ModelForm):
             ))
             t = get_template(self.template)
             return t.render(c)
-        else:
-            return self.as_p_complete()
+        return self.as_p_complete()
 
     def get_submit_value(self):
         return self.submit_value
@@ -1724,10 +1718,9 @@ class BaseAjaxModelForm(ModelForm):
                 'delete_model':delete_model,
                 'delete_id':delete_id
             }
-        else:
-            return {
-                'success':success
-            }
+        return {
+            'success':success
+        }
 
     def has_view_permission(self, request, obj):
         return self.can_view
@@ -2148,8 +2141,7 @@ class BaseEditView(TemplateView, _CommonViewMixin):
             resp = form.save()
             if resp:
                 return resp
-            else:
-                return HttpResponseRedirect(request.META.get('HTTP_REFERER'))
+            return HttpResponseRedirect(request.META.get('HTTP_REFERER'))
         return super(BaseEditView, self).get(*args, **kwargs)
 
 class ColumnField(object):
@@ -2172,8 +2164,7 @@ class ColumnField(object):
                 label=clean_title(self.label),
                 #label=self.sort_field,
             )
-        else:
-            return clean_title(self.label)
+        return clean_title(self.label)
 
 
 class BaseListView(ListView, _CommonViewMixin):
@@ -2204,8 +2195,7 @@ class BaseListView(ListView, _CommonViewMixin):
     def template_name(self):
         if self.ajax:
             return 'ajax_forms/generic_listview_results.html'
-        else:
-            return 'ajax_forms/generic_listview.html'
+        return 'ajax_forms/generic_listview.html'
 
     @property
     def q(self):
@@ -2467,8 +2457,8 @@ class BaseListView(ListView, _CommonViewMixin):
 
         return response
 
-    def get(self, *args, **kwargs):
-        return super(BaseListView, self).get(*args, **kwargs)
+    #def get(self, *args, **kwargs):
+        #return super(BaseListView, self).get(*args, **kwargs)
 
     def post(self, *args, **kwargs):
         ret = self.get_context_data(object_list=self.get_queryset())
@@ -2486,8 +2476,8 @@ class BaseAdminView(FormView):#TemplateView):
 
     fieldsets = []
 
-    def form_valid(self, form):
-        return super(BaseAdminView, self).form_valid(form)
+    #def form_valid(self, form):
+        #return super(BaseAdminView, self).form_valid(form)
 
     def get_context_data(self, *args, **kwargs):
         ctx = super(BaseAdminView, self).get_context_data(*args, **kwargs)

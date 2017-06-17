@@ -138,11 +138,10 @@ def paginator_number(cl, i):
         return format_html('<li><a href="?">...</a></li>')
     elif i == cl.page_num:
         return format_html('<li class="active"><a href="?">{0}</a></li> ', i+1)
-    else:
-        return format_html('<li><a href="{0}"{1}>{2}</a></li> ',
-                           cl.get_query_string({PAGE_VAR: i}),
-                           mark_safe(' class="end"' if i == cl.paginator.num_pages-1 else ''),
-                           i+1)
+    return format_html('<li><a href="{0}"{1}>{2}</a></li> ',
+                       cl.get_query_string({PAGE_VAR: i}),
+                       mark_safe(' class="end"' if i == cl.paginator.num_pages-1 else ''),
+                       i+1)
 
 @register.inclusion_tag('ajax_forms/pagination.html')
 def pagination(cl):
