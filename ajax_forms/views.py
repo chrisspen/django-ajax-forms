@@ -1876,7 +1876,7 @@ def AjaxSubForm(form_cls, slug, **kwargs):
     Helper method for modifying one form to act as a sub-form to a parent-form.
     """
     _id = str(uuid.uuid4()).replace('-', '')
-    new_cls = type("_%s_%s" % (form_cls.__name__, _id), form_cls, {'extra': kwargs.get('extra', 0)})
+    new_cls = type("_%s_%s" % (form_cls.__name__, _id), (form_cls,), {'extra': kwargs.get('extra', 0)})
     new_cls.fk = None
     new_cls.prefix = 'subform-%s' % new_cls.Meta.model.__name__.lower()
     new_cls.slug = slug
