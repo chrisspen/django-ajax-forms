@@ -331,8 +331,6 @@ class ModelView(ModelAdmin):
             js.append('ajax_forms/js/daf-actions%s.js' % extra)
         if self.prepopulated_fields:
             js.extend(['admin/js/urlify.js', 'admin/js/prepopulate%s.js' % extra])
-        if self.opts.get_ordered_objects():
-            js.extend(['admin/js/getElementsBySelector.js', 'admin/js/dom-drag.js', 'admin/js/admin/ordering.js'])
         return forms.Media(js=[static(_url) for _url in js])
 
     def get_title(self, request, obj=None):
@@ -440,7 +438,6 @@ class ModelView(ModelAdmin):
     def render_change_form(self, request, context, add=False, change=False, form_url='', obj=None):
         opts = self.model._meta
         app_label = opts.app_label
-        ordered_objects = opts.get_ordered_objects()
         context.update({
             'add': add,
             'change': change,
@@ -449,7 +446,6 @@ class ModelView(ModelAdmin):
             'has_delete_permission': self.has_delete_permission(request, obj),
             'has_file_field': True, # FIXME - this should check if form or formsets have a FileField,
             'has_absolute_url': hasattr(self.model, 'get_absolute_url'),
-            'ordered_objects': ordered_objects,
             'form_url': form_url,
             'opts': opts,
             'content_type_id': ContentType.objects.get_for_model(self.model).id,
@@ -2493,7 +2489,6 @@ class BaseAdminView(FormView):#TemplateView):
         opts.object_name = self.app_label
         opts.verbose_name = self.verbose_name
         opts.verbose_name_plural = self.verbose_name_plural
-        opts.get_ordered_objects = lambda: []
         ctx['change'] = False
         ctx['add'] = 0#True
         ctx['is_popup'] = False

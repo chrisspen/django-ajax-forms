@@ -9,11 +9,11 @@
 
 {% block extrastyle %}
 {{ block.super }}<link rel="stylesheet" type="text/css" href="{% static "admin/css/forms.css" %}" />
-	{% block extra_script %}{% endblock %}
-	{% block help %}{% endblock %}
+    {% block extra_script %}{% endblock %}
+    {% block help %}{% endblock %}
 {% endblock %}
 
-{% block coltype %}{% if ordered_objects %}colMS{% else %}colM{% endif %}{% endblock %}
+{% block coltype %}colM{% endblock %}
 
 {% block bodyclass %}{{ block.super }} {{ opts.app_label }}-{{ opts.object_name.lower }} change-form{% endblock %}
 
