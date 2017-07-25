@@ -69,12 +69,7 @@ from django.contrib.admin.options import ModelAdmin
 from django.contrib.admin.options import InlineModelAdmin as _InlineModelAdmin
 from django.contrib.admin.views.main import ChangeList
 from django.core.urlresolvers import reverse
-
-try:
-    # Removed in Django 1.6
-    from django.conf.urls.defaults import url, include
-except ImportError:
-    from django.conf.urls import url, include
+from django.conf.urls import url, include
 
 try:
     # Relocated in Django 1.6
@@ -109,7 +104,7 @@ def _url_for_result(self, result):
     pk = getattr(result, self.pk_attname)
     return reverse('%s:%s_%s_change' % (self.model_admin.admin_site.name,
                                         self.opts.app_label,
-                                        self.opts.module_name),
+                                        self.opts.model_name),
                    args=(quote(pk),),
                    current_app=self.model_admin.admin_site.name)
 ChangeList.url_for_result = _url_for_result
@@ -137,7 +132,7 @@ class Button(object):
                 view_name = self.view.format(
                     site_name=self.model_view.admin_site.name,
                     app_label=opts.app_label,
-                    module_name=opts.module_name)
+                    module_name=opts.model_name)
                 args = []
                 if callable(get_reverse_args):
                     args = get_reverse_args(self.model_view, obj)
@@ -183,11 +178,11 @@ class SiteView(AdminSite):
         super(SiteView, self).__init__(*args, **kwargs)
         self._path_registry = {} # {model,(app_name, module_name)}
 
-    def register(self, model_or_iterable, admin_class=None, app_name=None, module_name=None, **options):
+    def register(self, model_or_iterable, admin_class=None, app_name=None, model_name=None, **options):
         super(SiteView, self).register(model_or_iterable=model_or_iterable, admin_class=admin_class, **options)
         app_name = app_name or model_or_iterable._meta.app_label
-        module_name = module_name or model_or_iterable._meta.module_name
-        self._path_registry[model_or_iterable] = (app_name, module_name)
+        module_name = model_name or model_or_iterable._meta.model_name
+        self._path_registry[model_or_iterable] = (app_name, model_name)
 
     def has_permission(self, request):
         """
@@ -280,8 +275,8 @@ class SiteView(AdminSite):
 
         # Add in each model's views.
         for model, model_admin in six.iteritems(self._registry):
-            app_label, module_name = self._path_registry[model]
-            url_str = r'^%s/%s/' % (app_label, module_name)
+            app_label, model_name = self._path_registry[model]
+            url_str = r'^%s/%s/' % (app_label, model_name)
             urlpatterns += patterns('',
                 url(url_str,
                     include(model_admin.urls))
@@ -314,7 +309,7 @@ class ModelView(ModelAdmin):
 
     app_label = None
 
-    module_name = None
+    model_name = None
 
     extra_buttons = []
 
@@ -351,7 +346,7 @@ class ModelView(ModelAdmin):
 
         info = (
             self.app_label or self.model._meta.app_label,
-            self.module_name or self.model._meta.module_name,
+            self.model_name or self.model._meta.model_name,
         )
 
         urlpatterns = patterns('',
@@ -366,7 +361,7 @@ class ModelView(ModelAdmin):
             channel_name = inline.get_ajax_channel()
             info = (
                 self.app_label or self.model._meta.app_label,
-                self.module_name or self.model._meta.module_name,
+                self.model_name or self.model._meta.model_name,
                 channel_name,
             )
             if inline.can_add_ajax:
@@ -482,7 +477,7 @@ class ModelView(ModelAdmin):
             self.message_user(request, msg)
             if post_url_continue is None:
                 post_url_continue = reverse('%s:%s_%s_change' %
-                                            (self.admin_site.name, opts.app_label, opts.module_name),
+                                            (self.admin_site.name, opts.app_label, opts.model_name),
                                             args=(pk_value,),
                                             current_app=self.admin_site.name)
             else:
@@ -532,14 +527,14 @@ class ModelView(ModelAdmin):
             msg = _('The %(name)s "%(obj)s" was added successfully. You may edit it again below.') % msg_dict
             self.message_user(request, msg)
             return HttpResponseRedirect(reverse('%s:%s_%s_change' %
-                                        (self.admin_site.name, opts.app_label, opts.module_name),
+                                        (self.admin_site.name, opts.app_label, opts.model_name),
                                         args=(pk_value,),
                                         current_app=self.admin_site.name))
         elif "_addanother" in request.POST:
             msg = _('The %(name)s "%(obj)s" was changed successfully. You may add another %(name)s below.') % msg_dict
             self.message_user(request, msg)
             return HttpResponseRedirect(reverse('%s:%s_%s_add' %
-                                        (self.admin_site.name, opts.app_label, opts.module_name),
+                                        (self.admin_site.name, opts.app_label, opts.model_name),
                                         current_app=self.admin_site.name))
         msg = _('The %(name)s "%(obj)s" was changed successfully.') % msg_dict
         self.message_user(request, msg)
@@ -553,7 +548,7 @@ class ModelView(ModelAdmin):
         opts = self.model._meta
         if self.has_change_permission(request, None):
             post_url = reverse(
-                '%s:%s_%s_changelist' % (self.admin_site.name, opts.app_label, opts.module_name),
+                '%s:%s_%s_changelist' % (self.admin_site.name, opts.app_label, opts.model_name),
                 current_app=self.admin_site.name)
         else:
             post_url = reverse('%s:index' % self.admin_site.name, current_app=self.admin_site.name)
@@ -567,7 +562,7 @@ class ModelView(ModelAdmin):
         opts = self.model._meta
         if self.has_change_permission(request, None):
             post_url = reverse(
-                '%s:%s_%s_changelist' % (self.admin_site.name, opts.app_label, opts.module_name),
+                '%s:%s_%s_changelist' % (self.admin_site.name, opts.app_label, opts.model_name),
                 current_app=self.admin_site.name)
         else:
             post_url = reverse('%s:index' % (self.admin_site.name,),
@@ -750,7 +745,7 @@ class ModelView(ModelAdmin):
 
         if request.method == 'POST' and "_saveasnew" in request.POST:
             return self.add_view(request, form_url=reverse('%s:%s_%s_add' %
-                                    (self.admin_site.name, opts.app_label, opts.module_name),
+                                    (self.admin_site.name, opts.app_label, opts.model_name),
                                     current_app=self.admin_site.name))
 
         _ModelForm = self.get_form(request, obj)
@@ -964,7 +959,7 @@ class ModelView(ModelAdmin):
         selection_note_all = ungettext('%(total_count)s selected',
             'All %(total_count)s selected', cl.result_count)
         context = {
-            'module_name': force_text(opts.verbose_name_plural),
+            'model_name': force_text(opts.verbose_name_plural),
             'selection_note': _('0 of %(cnt)s selected') % {'cnt': len(cl.result_list)},
             'selection_note_all': selection_note_all % {'total_count': cl.result_count},
             'title': cl.title,
@@ -1025,7 +1020,7 @@ class ModelView(ModelAdmin):
                 return HttpResponseRedirect(reverse('%s:index' % self.admin_site.name,
                                                     current_app=self.admin_site.name))
             return HttpResponseRedirect(reverse('%s:%s_%s_changelist' %
-                                        (self.admin_site.name, opts.app_label, opts.module_name),
+                                        (self.admin_site.name, opts.app_label, opts.model_name),
                                         current_app=self.admin_site.name))
 
         object_name = force_text(opts.verbose_name)
