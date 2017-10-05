@@ -14,11 +14,13 @@ except ImportError:
     except ImportError:
         patterns = None
 
+from ajax_forms import views
+
 _patterns = [
     url(r'^/?(?P<model_name>[^/]+)/(?P<action>[^/]+)(?:/(?P<pk>[^/]+))?/?$',
-        'ajax_forms.views.handle_ajax_crud'),
+        views.handle_ajax_crud),
     url(r'^/?(?P<model_name>[^/]+)/(?P<action>[^/]+)/(?P<attr_slug>[^/]+)/(?P<pk>[^/]+)/?$',
-        'ajax_forms.views.handle_ajax_etter'),
+        views.handle_ajax_etter),
 ]
 
 if patterns is None:

@@ -349,13 +349,13 @@ class ModelView(ModelAdmin):
             self.model_name or self.model._meta.model_name,
         )
 
-        urlpatterns = patterns('',
+        urlpatterns = [
             url(r'^$', wrap(self.changelist_view), name='%s_%s_changelist' % info),
             url(r'^add/$', wrap(self.add_view), name='%s_%s_add' % info),
             url(r'^(.+)/history/$', wrap(self.history_view), name='%s_%s_history' % info),
             url(r'^(.+)/delete/$', wrap(self.delete_view), name='%s_%s_delete' % info),
             url(r'^([0-9]+)/$', wrap(self.change_view), name='%s_%s_change' % info),
-        )
+        ]
         inlines = self.get_inline_instances(request=None)
         for inline in inlines:
             channel_name = inline.get_ajax_channel()
@@ -366,18 +366,18 @@ class ModelView(ModelAdmin):
             )
             if inline.can_add_ajax:
                 name = '%s_%s_%s_add_ajax' % info
-                urlpatterns += patterns('',
+                urlpatterns += [
                     url(r'^([0-9]+)/%s/add/ajax/$' % (channel_name,),
                         wrap_inline(inline.add_view_ajax),
                         name=name)
-                )
+                ]
             if inline.can_change_ajax:
                 name = '%s_%s_%s_change_ajax' % info
-                urlpatterns += patterns('',
+                urlpatterns += [
                     url(r'^([0-9]+)/%s/([0-9]+)/ajax/$' % (channel_name,),
                         wrap_inline(inline.change_view_ajax),
                         name=name)
-                )
+                ]
 
         return urlpatterns
 
