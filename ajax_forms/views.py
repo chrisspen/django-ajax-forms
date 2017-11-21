@@ -521,7 +521,7 @@ class ModelView(ModelAdmin):
         if "_continue" in request.POST:
             msg = _('The %(name)s "%(obj)s" was changed successfully. You may edit it again below.') % msg_dict
             self.message_user(request, msg)
-            if "_popup" in request.REQUEST:
+            if "_popup" in request.GET:
                 return HttpResponseRedirect(request.path + "?_popup=1")
             return HttpResponseRedirect(request.path)
         elif "_saveasnew" in request.POST:
